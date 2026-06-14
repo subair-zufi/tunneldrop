@@ -24,7 +24,7 @@ axum = "0.7"
 tokio-util = { version = "0.7", features = ["io"] }
 rand = "0.8"
 hex = "0.4"
-argon2 = "0.5"
+argon2 = { version = "0.5", features = ["std"] }
 anyhow = "1"
 
 [dev-dependencies]

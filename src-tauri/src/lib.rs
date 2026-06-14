@@ -1,3 +1,4 @@
+mod password;
 mod token;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
