@@ -44,16 +44,20 @@ pub async fn create_share(
     state: State<'_, AppState>,
 ) -> Result<Vec<ShareInfo>, String> {
     let pw = password.filter(|p| !p.is_empty());
-    state
+    let token = state
         .add_share(std::path::PathBuf::from(path), pw)
         .map_err(|e| e.to_string())?;
 
     // Lazily start the tunnel if it is not running. Clone a cheap handle so the
-    // Mutex guard is never held across the await.
+    // Mutex guard is never held across the await. If the tunnel fails to start,
+    // roll back the share we just added so it doesn't linger un-revokable.
     if !state.tunnel.lock().unwrap().is_running() {
         let port = state.port;
         let mgr = { state.tunnel.lock().unwrap().clone_handle() };
-        mgr.start(port).await.map_err(|e| e.to_string())?;
+        if let Err(e) = mgr.start(port).await {
+            state.revoke_share(&token);
+            return Err(e.to_string());
+        }
     }
 
     Ok(share_infos(&state))

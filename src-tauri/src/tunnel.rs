@@ -69,8 +69,22 @@ impl TunnelManager {
         *self.base_url.lock().unwrap() = None;
     }
 
+    /// Returns whether the tunnel process is alive. Reaps a child that has
+    /// exited on its own (cloudflared crash) so the next `create_share` will
+    /// transparently restart the tunnel rather than trusting a stale handle.
     pub fn is_running(&self) -> bool {
-        self.child.lock().unwrap().is_some()
+        let mut guard = self.child.lock().unwrap();
+        let exited = match guard.as_mut() {
+            Some(child) => matches!(child.try_wait(), Ok(Some(_))),
+            None => return false,
+        };
+        if exited {
+            *guard = None;
+            drop(guard);
+            *self.base_url.lock().unwrap() = None;
+            return false;
+        }
+        true
     }
 
     /// Returns a handle sharing the same child/base_url state (cheap Arc clone).
@@ -185,6 +199,10 @@ mod tests {
             "should fail fast on EOF, not wait for the 15s deadline (took {:?})",
             started.elapsed()
         );
+        // The process exited on its own; is_running must reap it and report false
+        // (so a later create_share will restart the tunnel rather than trust a
+        // stale handle).
+        assert!(!mgr.is_running(), "a crashed/exited process must read as not running");
         mgr.stop();
     }
 }

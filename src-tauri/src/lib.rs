@@ -47,7 +47,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
-            let cf = cloudflared_path(&app.handle());
+            let cf = cloudflared_path(app.handle());
             let app_state = AppState::new(port, cf);
             app.manage(app_state.clone());
 

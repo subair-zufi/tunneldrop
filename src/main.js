@@ -34,20 +34,30 @@ async function revoke(token) {
   render(shares);
 }
 
+function formatSize(bytes) {
+  const units = ["B", "KB", "MB", "GB"];
+  let size = bytes, u = 0;
+  while (size >= 1024 && u < units.length - 1) { size /= 1024; u++; }
+  return `${size.toFixed(1)} ${units[u]}`;
+}
+
 function render(shares) {
   sharesEl.innerHTML = "";
   for (const s of shares) {
     const li = document.createElement("li");
-    const link = s.link ?? "(link pending…)";
+    const link = s.link ?? null;
+    const linkHtml = link
+      ? `<a class="link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link)}</a>`
+      : `<div class="link">(link pending…)</div>`;
     li.innerHTML = `
-      <div class="name">${escapeHtml(s.name)} <small>(${(s.size / 1024).toFixed(1)} KB)</small></div>
-      <div class="link">${escapeHtml(link)}</div>
+      <div class="name">${escapeHtml(s.name)} <small>(${formatSize(s.size)})</small></div>
+      ${linkHtml}
       <div>
-        <button class="copy">Copy link</button>
+        <button class="copy" ${link ? "" : "disabled"}>Copy link</button>
         <button class="revoke">Revoke</button>
         <small>${s.has_password ? "🔒 " : ""}${s.download_count} downloads</small>
       </div>`;
-    li.querySelector(".copy").onclick = () => navigator.clipboard.writeText(link);
+    li.querySelector(".copy").onclick = () => { if (link) navigator.clipboard.writeText(link); };
     li.querySelector(".revoke").onclick = () => revoke(s.token);
     sharesEl.appendChild(li);
   }
