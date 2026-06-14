@@ -13,7 +13,9 @@ pub struct TunnelManager {
 
 impl TunnelManager {
     /// `program` is the path to the cloudflared binary (or a fake for tests).
-    /// `extra_args` are appended after the standard tunnel args.
+    /// When `extra_args` is non-empty, it REPLACES the standard tunnel args
+    /// entirely (used for testing with a fake binary). When empty, the standard
+    /// `tunnel --url http://127.0.0.1:{port}` args are used.
     pub fn new(program: impl Into<String>, extra_args: Vec<String>) -> Self {
         TunnelManager {
             program: program.into(),
@@ -44,7 +46,7 @@ impl TunnelManager {
         let base_url = self.base_url.clone();
         // cloudflared prints the URL to stderr in real life and our fake uses
         // stdout; scan both.
-        let found = scan_for_url(stdout, stderr, base_url.clone()).await;
+        let found = scan_for_url(stdout, stderr).await;
         match found {
             Some(url) => {
                 *base_url.lock().unwrap() = Some(url.clone());
@@ -75,26 +77,31 @@ impl TunnelManager {
 async fn scan_for_url(
     stdout: tokio::process::ChildStdout,
     stderr: tokio::process::ChildStderr,
-    _base_url: Arc<Mutex<Option<String>>>,
 ) -> Option<String> {
     let mut out = BufReader::new(stdout).lines();
     let mut err = BufReader::new(stderr).lines();
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(15));
     tokio::pin!(deadline);
+    // Track per-stream EOF so a closed pipe (e.g. the child exited before
+    // printing a URL) doesn't busy-spin the select loop until the deadline.
+    let (mut out_done, mut err_done) = (false, false);
     loop {
+        if out_done && err_done {
+            return None; // process exited without printing a URL
+        }
         tokio::select! {
-            _ = &mut deadline => return None,
-            line = out.next_line() => {
+            () = &mut deadline => return None,
+            line = out.next_line(), if !out_done => {
                 match line {
                     Ok(Some(l)) => if let Some(u) = parse_tunnel_url(&l) { return Some(u); },
-                    Ok(None) => {}
+                    Ok(None) => out_done = true,
                     Err(_) => return None,
                 }
             }
-            line = err.next_line() => {
+            line = err.next_line(), if !err_done => {
                 match line {
                     Ok(Some(l)) => if let Some(u) = parse_tunnel_url(&l) { return Some(u); },
-                    Ok(None) => {}
+                    Ok(None) => err_done = true,
                     Err(_) => return None,
                 }
             }
@@ -152,5 +159,22 @@ mod tests {
         assert!(mgr.is_running());
         mgr.stop();
         assert!(!mgr.is_running());
+    }
+
+    #[tokio::test]
+    async fn start_errors_quickly_when_process_exits_without_url() {
+        // The fake exits immediately without printing a URL. scan_for_url must
+        // return on double-EOF rather than busy-spinning until the 15s deadline.
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fake_cloudflared_nourl.sh");
+        let mut mgr = TunnelManager::new(script, vec![script.to_string()]);
+        let started = std::time::Instant::now();
+        let result = mgr.start(12345).await;
+        assert!(result.is_err(), "expected error when no URL is printed");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "should fail fast on EOF, not wait for the 15s deadline (took {:?})",
+            started.elapsed()
+        );
+        mgr.stop();
     }
 }
