@@ -21,10 +21,20 @@ fn pick_free_port() -> u16 {
         .port()
 }
 
-/// Resolves the cloudflared binary path; falls back to a PATH lookup.
-/// (Bundled-sidecar resolution is added in a later task.)
-fn cloudflared_path(_app: &tauri::AppHandle) -> String {
-    "cloudflared".to_string()
+/// Resolves the cloudflared binary path.
+/// Prefers the bundled sidecar placed next to the executable by Tauri's
+/// externalBin mechanism; falls back to "cloudflared" on PATH (dev / Homebrew).
+fn cloudflared_path(app: &tauri::AppHandle) -> String {
+    // `Manager` is already in scope at module level.
+    if let Ok(dir) = app.path().resource_dir() {
+        for name in ["cloudflared", "cloudflared.exe"] {
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                return candidate.to_string_lossy().to_string();
+            }
+        }
+    }
+    "cloudflared".to_string() // fall back to PATH
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
