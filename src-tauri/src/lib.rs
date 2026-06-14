@@ -1,3 +1,4 @@
+mod commands;
 mod password;
 mod server;
 mod share;
