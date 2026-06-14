@@ -22,15 +22,17 @@ fn pick_free_port() -> u16 {
 }
 
 /// Resolves the cloudflared binary path.
-/// Prefers the bundled sidecar placed next to the executable by Tauri's
-/// externalBin mechanism; falls back to "cloudflared" on PATH (dev / Homebrew).
-fn cloudflared_path(app: &tauri::AppHandle) -> String {
-    // `Manager` is already in scope at module level.
-    if let Ok(dir) = app.path().resource_dir() {
-        for name in ["cloudflared", "cloudflared.exe"] {
-            let candidate = dir.join(name);
-            if candidate.exists() {
-                return candidate.to_string_lossy().to_string();
+/// Prefers the bundled sidecar, which Tauri's externalBin mechanism places
+/// NEXT TO the app executable (with the target-triple suffix stripped), not in
+/// the resource dir. Falls back to "cloudflared" on PATH (dev / Homebrew).
+fn cloudflared_path(_app: &tauri::AppHandle) -> String {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for name in ["cloudflared", "cloudflared.exe"] {
+                let candidate = dir.join(name);
+                if candidate.exists() {
+                    return candidate.to_string_lossy().to_string();
+                }
             }
         }
     }
