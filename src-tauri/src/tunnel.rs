@@ -8,7 +8,7 @@ pub struct TunnelManager {
     program: String,
     extra_args: Vec<String>,
     base_url: Arc<Mutex<Option<String>>>,
-    child: Option<tokio::process::Child>,
+    child: Arc<Mutex<Option<tokio::process::Child>>>,
 }
 
 impl TunnelManager {
@@ -21,13 +21,13 @@ impl TunnelManager {
             program: program.into(),
             extra_args,
             base_url: Arc::new(Mutex::new(None)),
-            child: None,
+            child: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Starts the tunnel pointed at the given local port and waits (up to ~15s)
     /// for the public URL to appear in stdout. Returns the URL.
-    pub async fn start(&mut self, port: u16) -> anyhow::Result<String> {
+    pub async fn start(&self, port: u16) -> anyhow::Result<String> {
         let mut cmd = Command::new(&self.program);
         if self.extra_args.is_empty() {
             cmd.arg("tunnel")
@@ -41,7 +41,7 @@ impl TunnelManager {
         let mut child = cmd.spawn()?;
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
-        self.child = Some(child);
+        *self.child.lock().unwrap() = Some(child);
 
         let base_url = self.base_url.clone();
         // cloudflared prints the URL to stderr in real life and our fake uses
@@ -61,16 +61,26 @@ impl TunnelManager {
     }
 
     /// Kills the child process if running.
-    pub fn stop(&mut self) {
-        if let Some(child) = self.child.as_mut() {
+    pub fn stop(&self) {
+        if let Some(child) = self.child.lock().unwrap().as_mut() {
             let _ = child.start_kill();
         }
-        self.child = None;
+        *self.child.lock().unwrap() = None;
         *self.base_url.lock().unwrap() = None;
     }
 
     pub fn is_running(&self) -> bool {
-        self.child.is_some()
+        self.child.lock().unwrap().is_some()
+    }
+
+    /// Returns a handle sharing the same child/base_url state (cheap Arc clone).
+    pub fn clone_handle(&self) -> TunnelManager {
+        TunnelManager {
+            program: self.program.clone(),
+            extra_args: self.extra_args.clone(),
+            base_url: self.base_url.clone(),
+            child: self.child.clone(),
+        }
     }
 }
 
@@ -153,7 +163,7 @@ mod tests {
     #[tokio::test]
     async fn start_captures_url_from_fake_binary() {
         let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fake_cloudflared.sh");
-        let mut mgr = TunnelManager::new(script, vec![script.to_string()]);
+        let mgr = TunnelManager::new(script, vec![script.to_string()]);
         let url = mgr.start(12345).await.expect("should capture url");
         assert_eq!(url, "https://fake-test-tunnel.trycloudflare.com");
         assert!(mgr.is_running());
@@ -166,7 +176,7 @@ mod tests {
         // The fake exits immediately without printing a URL. scan_for_url must
         // return on double-EOF rather than busy-spinning until the 15s deadline.
         let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fake_cloudflared_nourl.sh");
-        let mut mgr = TunnelManager::new(script, vec![script.to_string()]);
+        let mgr = TunnelManager::new(script, vec![script.to_string()]);
         let started = std::time::Instant::now();
         let result = mgr.start(12345).await;
         assert!(result.is_err(), "expected error when no URL is printed");
