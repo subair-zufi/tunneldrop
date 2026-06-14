@@ -1,6 +1,7 @@
 mod password;
 mod share;
 mod token;
+mod tunnel;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
