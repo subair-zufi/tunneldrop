@@ -2,9 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="styles.css" />
     <title>LocalRemoteShare</title>
   </head>
   <body>
-    <h1>LocalRemoteShare</h1>
+    <main>
+      <div id="dropzone">Drag a file here, or <button id="pick">choose a file</button></div>
+      <label id="pw-row">
+        <input type="checkbox" id="use-pw" /> Password protect
+        <input type="password" id="pw" placeholder="password" disabled />
+      </label>
+      <ul id="shares"></ul>
+      <p id="status"></p>
+    </main>
+    <script type="module" src="main.js"></script>
   </body>
 </html>

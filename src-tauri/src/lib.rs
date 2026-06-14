@@ -33,6 +33,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let cf = cloudflared_path(&app.handle());
             let app_state = AppState::new(port, cf);
