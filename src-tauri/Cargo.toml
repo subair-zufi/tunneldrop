@@ -1,3 +1,7 @@
+# NOTE: Cargo.lock pins alloc-no-stdlib = 2.0.4 to resolve a brotli transitive
+# version conflict (two incompatible alloc-no-stdlib versions in one build) pulled
+# in via tauri-utils. Only run `cargo update -p alloc-no-stdlib` if `cargo build`
+# still passes afterward.
 [package]
 name = "local-remote-share"
 version = "0.1.0"
