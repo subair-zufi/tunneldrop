@@ -17,6 +17,27 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Escapes a string for safe interpolation into HTML text/attribute contexts.
+/// The landing page is served to untrusted remote viewers, so a file name
+/// containing HTML metacharacters must not be able to inject markup or script.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+/// Sanitizes a file name for use in a `Content-Disposition` header value:
+/// strips quotes (which would break the quoted-string) and control characters
+/// (which could inject CRLF and split the response).
+fn sanitize_filename(s: &str) -> String {
+    s.replace('"', "_")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect()
+}
+
 fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut size = bytes as f64;
@@ -47,9 +68,9 @@ input{{padding:.5rem;margin:.5rem;font-size:1rem}}</style></head>
 <body><h1>{name}</h1><p>{size}</p>
 <form method="post" action="/d/{token}/download">{pw_field}<br/>
 <button type="submit">Download</button></form></body></html>"#,
-        name = share.name,
+        name = html_escape(&share.name),
         size = human_size(share.size),
-        token = token,
+        token = html_escape(&token),
         pw_field = pw_field,
     );
     Html(html).into_response()
@@ -82,6 +103,8 @@ async fn download(
         Err(_) => return (StatusCode::GONE, "File no longer available.").into_response(),
     };
 
+    // NOTE: the count increments when the transfer begins, not on completion;
+    // an aborted download is still counted.
     {
         let mut reg = state.registry.lock().unwrap();
         if let Some(s) = reg.get_mut(&token) {
@@ -94,9 +117,10 @@ async fn download(
     (
         [
             (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+            (header::CONTENT_LENGTH, share.size.to_string()),
             (
                 header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{}\"", share.name),
+                format!("attachment; filename=\"{}\"", sanitize_filename(&share.name)),
             ),
         ],
         body,
@@ -139,6 +163,40 @@ mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         assert!(String::from_utf8_lossy(&body).contains("report.pdf"));
+    }
+
+    #[test]
+    fn html_escape_neutralizes_markup() {
+        assert_eq!(
+            html_escape("<script>alert('x')&\"</script>"),
+            "&lt;script&gt;alert(&#x27;x&#x27;)&amp;&quot;&lt;/script&gt;"
+        );
+    }
+
+    #[test]
+    fn sanitize_filename_strips_quotes_and_controls() {
+        assert_eq!(sanitize_filename("ev\"il\r\n.txt"), "ev_il.txt");
+    }
+
+    #[tokio::test]
+    async fn landing_page_escapes_malicious_name() {
+        let (_keep, path) = temp_file(b"x");
+        let share = Share::new(
+            "tokx".into(),
+            path,
+            "<script>alert(1)</script>.txt".into(),
+            1,
+            None,
+        );
+        let app = build_router(state_with_share(share));
+        let res = app
+            .oneshot(Request::builder().uri("/d/tokx").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(!html.contains("<script>alert(1)"), "raw script must not appear");
+        assert!(html.contains("&lt;script&gt;"), "name must be HTML-escaped");
     }
 
     #[tokio::test]
