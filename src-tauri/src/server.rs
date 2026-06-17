@@ -3,8 +3,8 @@ use axum::{
     body::Body,
     extract::{Path, State},
     http::{header, StatusCode},
-    response::{Html, IntoResponse, Response},
-    routing::{get, post},
+    response::{Html, IntoResponse, Redirect, Response},
+    routing::get,
     Router,
 };
 use tokio_util::io::ReaderStream;
@@ -13,7 +13,9 @@ use tokio_util::io::ReaderStream;
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/d/:token", get(landing_page))
-        .route("/d/:token/download", post(download))
+        // Accept GET for password-free shares (Cloudflare-friendly direct link)
+        // and POST for password-protected shares (password sent in form body).
+        .route("/d/:token/download", get(download).post(download))
         .with_state(state)
 }
 
@@ -55,10 +57,23 @@ async fn landing_page(Path(token): Path<String>, State(state): State<AppState>) 
         return (StatusCode::NOT_FOUND, "Link not found or revoked.").into_response();
     };
     let needs_pw = share.password_hash.is_some();
-    let pw_field = if needs_pw {
-        r#"<input type="password" name="password" placeholder="Password" required />"#
+    // For password-free shares use a plain <a> GET link so the browser issues
+    // a standard GET request. Cloudflare quick tunnels can show a browser
+    // challenge on POST requests, which breaks the download; GET links work
+    // reliably through the tunnel. Password-protected shares still need POST
+    // to carry the password in the request body.
+    let download_widget = if needs_pw {
+        format!(
+            r#"<form method="post" action="/d/{token}/download">
+<input type="password" name="password" placeholder="Password" required /><br/>
+<button type="submit">Download</button></form>"#,
+            token = html_escape(&token)
+        )
     } else {
-        ""
+        format!(
+            r#"<a href="/d/{token}/download"><button>Download</button></a>"#,
+            token = html_escape(&token)
+        )
     };
     let html = format!(
         r#"<!doctype html><html><head><meta charset="utf-8"><title>{name}</title>
@@ -66,12 +81,10 @@ async fn landing_page(Path(token): Path<String>, State(state): State<AppState>) 
 button{{padding:.6rem 1.2rem;font-size:1rem;cursor:pointer}}
 input{{padding:.5rem;margin:.5rem;font-size:1rem}}</style></head>
 <body><h1>{name}</h1><p>{size}</p>
-<form method="post" action="/d/{token}/download">{pw_field}<br/>
-<button type="submit">Download</button></form></body></html>"#,
+{download_widget}</body></html>"#,
         name = html_escape(&share.name),
         size = human_size(share.size),
-        token = html_escape(&token),
-        pw_field = pw_field,
+        download_widget = download_widget,
     );
     Html(html).into_response()
 }
@@ -93,6 +106,10 @@ async fn download(
 
     if let Some(hash) = &share.password_hash {
         let provided = form.and_then(|f| f.0.password).unwrap_or_default();
+        if provided.is_empty() {
+            // GET request on a password-protected share: bounce back to landing page.
+            return Redirect::to(&format!("/d/{token}")).into_response();
+        }
         if !crate::password::verify_password(&provided, hash) {
             return (StatusCode::UNAUTHORIZED, "Incorrect password.").into_response();
         }
@@ -271,5 +288,75 @@ mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"secret");
+    }
+
+    #[tokio::test]
+    async fn get_download_works_for_unprotected_share() {
+        let (_keep, path) = temp_file(b"get works");
+        let share = Share::new("tok5".into(), path, "b.txt".into(), 9, None);
+        let app = build_router(state_with_share(share));
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/d/tok5/download")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], b"get works");
+    }
+
+    #[tokio::test]
+    async fn get_download_on_protected_share_redirects_to_landing() {
+        let (_keep, path) = temp_file(b"secret");
+        let hash = crate::password::hash_password("pw");
+        let share = Share::new("tok6".into(), path, "s.txt".into(), 6, Some(hash));
+        let app = build_router(state_with_share(share));
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/d/tok6/download")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    }
+
+    #[tokio::test]
+    async fn landing_page_uses_get_link_for_unprotected_share() {
+        let (_keep, path) = temp_file(b"hi");
+        let share = Share::new("tok7".into(), path, "f.txt".into(), 2, None);
+        let app = build_router(state_with_share(share));
+        let res = app
+            .oneshot(Request::builder().uri("/d/tok7").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains(r#"href="/d/tok7/download""#), "must use GET link, not POST form");
+        assert!(!html.contains(r#"method="post""#), "must not use POST form for unprotected share");
+    }
+
+    #[tokio::test]
+    async fn landing_page_uses_post_form_for_protected_share() {
+        let (_keep, path) = temp_file(b"hi");
+        let hash = crate::password::hash_password("pw");
+        let share = Share::new("tok8".into(), path, "g.txt".into(), 2, Some(hash));
+        let app = build_router(state_with_share(share));
+        let res = app
+            .oneshot(Request::builder().uri("/d/tok8").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains(r#"method="post""#), "protected share must use POST form");
+        assert!(html.contains(r#"type="password""#), "protected share must have password field");
     }
 }

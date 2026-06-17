@@ -35,14 +35,46 @@ Built with [Tauri 2](https://tauri.app/) (Rust + plain HTML/CSS/JS), a small
 
 - **Rust** (stable) — install via [rustup](https://rustup.rs/).
 - **Tauri CLI** — `cargo install tauri-cli --version "^2"`.
-- **System dependencies for Tauri 2** — see the
-  [official prerequisites](https://v2.tauri.app/start/prerequisites/) for your
-  platform (webkit2gtk on Linux, Xcode CLT on macOS, WebView2 on Windows).
 - **cloudflared** — needed at runtime. Either:
   - install it on PATH (`brew install cloudflared`, `winget install
     Cloudflare.cloudflared`, etc.), **or**
   - drop a binary into `src-tauri/binaries/` using the naming convention below
     so Tauri can bundle it as a sidecar.
+
+### Linux system dependencies
+
+On Debian/Ubuntu (and derivatives), install the libraries required to build
+and run the WebKit-based UI and the Ayatana tray icon:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+    libgtk-3-dev libwebkit2gtk-4.1-dev \
+    libayatana-appindicator3-dev librsvg2-dev
+```
+
+> **GNOME tray note:** GNOME 40+ hides AppIndicator tray icons by default.
+> Install the
+> [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/)
+> GNOME Shell extension to make the tray icon visible. Without it the app
+> still works normally — closing the window exits the app cleanly instead of
+> hiding to tray.
+
+For **cloudflared** on Linux you can also install it via the official repo:
+
+```bash
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+  | sudo tee /usr/share/keyrings/cloudflare-main.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] \
+  https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt-get update && sudo apt-get install -y cloudflared
+```
+
+### macOS / Windows system dependencies
+
+See the [official Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+(Xcode CLT on macOS, WebView2 on Windows — both are usually already present).
 
 ## Run in development
 
@@ -62,7 +94,13 @@ A bundled build needs the cloudflared sidecar present for your target. The
 `src-tauri/binaries/` directory is gitignored — populate it first:
 
 ```bash
-# macOS Apple Silicon, using Homebrew's cloudflared as the source
+# Linux x86-64 — download from cloudflared releases
+curl -fsSL \
+  "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" \
+  -o src-tauri/binaries/cloudflared-x86_64-unknown-linux-gnu
+chmod +x src-tauri/binaries/cloudflared-x86_64-unknown-linux-gnu
+
+# macOS Apple Silicon — copy from Homebrew
 cp "$(which cloudflared)" src-tauri/binaries/cloudflared-aarch64-apple-darwin
 chmod +x src-tauri/binaries/cloudflared-aarch64-apple-darwin
 ```

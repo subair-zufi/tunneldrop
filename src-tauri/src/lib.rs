@@ -1,13 +1,14 @@
 mod token;
 mod password;
 mod share;
-mod tunnel;
-mod state;
-mod server;
+pub mod tunnel;
+pub mod state;
+pub mod server;
 mod commands;
 
 use state::AppState;
 use std::net::SocketAddr;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tauri::tray::TrayIconBuilder;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::Manager;
@@ -39,6 +40,10 @@ fn cloudflared_path(_app: &tauri::AppHandle) -> String {
     "cloudflared".to_string() // fall back to PATH
 }
 
+/// Shared flag: was the tray icon successfully created?
+/// Used by the window-close handler to decide whether to hide or quit.
+struct TrayAvailable(Arc<AtomicBool>);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let port = pick_free_port();
@@ -62,27 +67,60 @@ pub fn run() {
             // Tray icon with a quit item.
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&quit]).build()?;
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .on_menu_event(|app, event| {
-                    if event.id() == "quit" {
-                        // Tear down the tunnel before exiting.
-                        if let Some(state) = app.try_state::<AppState>() {
-                            state.tunnel.lock().unwrap().stop();
-                        }
-                        app.exit(0);
-                    }
-                })
-                .on_tray_icon_event(|tray, _event| {
-                    // Show the main window when the tray icon is clicked.
-                    if let Some(win) = tray.app_handle().get_webview_window("main") {
-                        let _ = win.show();
-                        let _ = win.set_focus();
-                    }
-                })
-                .build(app)?;
 
+            let tray_created = Arc::new(AtomicBool::new(false));
+
+            // On Linux the system tray requires libayatana-appindicator3 and a
+            // compatible desktop environment (GNOME needs the AppIndicator Shell
+            // extension). Build failure is non-fatal: the app continues without a
+            // tray icon and window-close will quit instead of hide.
+            let icon = app.default_window_icon()
+                .expect("icon must be set in tauri.conf.json")
+                .clone();
+
+            // On Linux, libloading opens libayatana-appindicator3.so.1 lazily
+            // inside tray-icon. If the library is absent the Lazy initialiser
+            // panics rather than returning an error, so we need catch_unwind.
+            // On macOS and Windows build() returns Err (never panics).
+            let tray_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                TrayIconBuilder::new()
+                    .icon(icon)
+                    .menu(&menu)
+                    .on_menu_event(|app, event| {
+                        if event.id() == "quit" {
+                            // Tear down the tunnel before exiting.
+                            if let Some(state) = app.try_state::<AppState>() {
+                                state.tunnel.lock().unwrap().stop();
+                            }
+                            app.exit(0);
+                        }
+                    })
+                    .on_tray_icon_event(|tray, _event| {
+                        // Show the main window when the tray icon is clicked.
+                        if let Some(win) = tray.app_handle().get_webview_window("main") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    })
+                    .build(app)
+            }));
+
+            match tray_result {
+                Ok(Ok(_)) => tray_created.store(true, Ordering::SeqCst),
+                Ok(Err(e)) => eprintln!(
+                    "LocalRemoteShare: tray icon unavailable ({e}). \
+                     Closing the window will quit the app."
+                ),
+                Err(_) => eprintln!(
+                    "LocalRemoteShare: tray icon unavailable \
+                     (libayatana-appindicator3 not found — install \
+                     libayatana-appindicator3-1 and, on GNOME, the \
+                     AppIndicator Shell extension). \
+                     Closing the window will quit the app."
+                ),
+            }
+
+            app.manage(TrayAvailable(tray_created));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -91,10 +129,25 @@ pub fn run() {
             commands::list_shares
         ])
         .on_window_event(|window, event| {
-            // Hide instead of quitting when the window is closed (tray app behavior).
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                window.hide().unwrap();
-                api.prevent_close();
+                let tray_ok = window
+                    .app_handle()
+                    .try_state::<TrayAvailable>()
+                    .map(|s| s.0.load(Ordering::SeqCst))
+                    .unwrap_or(false);
+
+                if tray_ok {
+                    // Tray is available: hide to tray instead of quitting.
+                    let _ = window.hide();
+                    api.prevent_close();
+                } else {
+                    // No tray (or it failed to build). Let the window close and
+                    // stop the tunnel so no cloudflared process is left behind.
+                    if let Some(state) = window.app_handle().try_state::<AppState>() {
+                        state.tunnel.lock().unwrap().stop();
+                    }
+                    // Allow the close to proceed — Tauri exits when the last window closes.
+                }
             }
         })
         .run(tauri::generate_context!())

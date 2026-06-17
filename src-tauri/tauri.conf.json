@@ -24,6 +24,11 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.png"],
-    "externalBin": ["binaries/cloudflared"]
+    "externalBin": ["binaries/cloudflared"],
+    "linux": {
+      "deb": {
+        "depends": ["libayatana-appindicator3-1"]
+      }
+    }
   }
 }

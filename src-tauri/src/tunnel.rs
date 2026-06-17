@@ -52,7 +52,18 @@ impl TunnelManager {
                 *base_url.lock().unwrap() = Some(url.clone());
                 Ok(url)
             }
-            None => anyhow::bail!("tunnel URL not found before stream closed"),
+            None => {
+                // The process exited before printing a URL. Reap it now so that
+                // is_running() correctly reports false (rather than racing with
+                // try_wait on a process that closed its pipes but hasn't fully
+                // exited yet from the OS's point of view).
+                // Drop the MutexGuard before awaiting to keep the future Send.
+                let child = self.child.lock().unwrap().take();
+                if let Some(mut c) = child {
+                    let _ = c.wait().await;
+                }
+                anyhow::bail!("tunnel URL not found before stream closed")
+            }
         }
     }
 
