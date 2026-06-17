@@ -1,9 +1,9 @@
 mod token;
 mod password;
 mod share;
-mod tunnel;
-mod state;
-mod server;
+pub mod tunnel;
+pub mod state;
+pub mod server;
 mod commands;
 
 use state::AppState;
