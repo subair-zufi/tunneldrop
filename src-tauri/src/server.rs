@@ -2,7 +2,7 @@ use crate::state::AppState;
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
     routing::get,
     Router,
@@ -16,7 +16,74 @@ pub fn build_router(state: AppState) -> Router {
         // Accept GET for password-free shares (Cloudflare-friendly direct link)
         // and POST for password-protected shares (password sent in form body).
         .route("/d/:token/download", get(download).post(download))
+        // Inline view of the file with a real content type. Used as the Open
+        // Graph preview image for image shares (WhatsApp/Slack/etc. fetch it).
+        .route("/d/:token/raw", get(raw))
         .with_state(state)
+}
+
+/// Maps a file extension to a content type for inline serving / link previews.
+fn content_type_for(name: &str) -> &'static str {
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "pdf" => "application/pdf",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+/// True if the file looks like a raster image we can use as a preview thumbnail.
+fn is_image(name: &str) -> bool {
+    matches!(
+        content_type_for(name),
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp"
+    )
+}
+
+/// Human-friendly file-kind label for the preview subtitle, e.g. "PNG image".
+fn kind_label(name: &str) -> &'static str {
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "PNG image",
+        "jpg" | "jpeg" => "JPEG image",
+        "gif" => "GIF image",
+        "webp" => "WebP image",
+        "bmp" => "Bitmap image",
+        "svg" => "SVG image",
+        "pdf" => "PDF document",
+        "mp4" | "webm" | "mov" => "Video",
+        "mp3" | "wav" => "Audio",
+        "zip" | "gz" | "tar" | "rar" | "7z" => "Archive",
+        "txt" | "md" => "Text document",
+        "doc" | "docx" => "Word document",
+        "xls" | "xlsx" => "Spreadsheet",
+        "ppt" | "pptx" => "Presentation",
+        _ => "File",
+    }
+}
+
+/// Reconstructs the public base URL (scheme://host) from request headers so
+/// Open Graph tags can carry absolute URLs. Cloudflare quick tunnels are HTTPS
+/// and set `x-forwarded-proto`; fall back to https for any tunneled request.
+fn base_url(headers: &HeaderMap) -> Option<String> {
+    let host = headers.get(header::HOST)?.to_str().ok()?;
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("https");
+    Some(format!("{scheme}://{host}"))
 }
 
 /// Escapes a string for safe interpolation into HTML text/attribute contexts.
@@ -51,7 +118,11 @@ fn human_size(bytes: u64) -> String {
     format!("{size:.1} {}", UNITS[unit])
 }
 
-async fn landing_page(Path(token): Path<String>, State(state): State<AppState>) -> Response {
+async fn landing_page(
+    Path(token): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
     let share = { state.registry.lock().unwrap().get(&token).cloned() };
     let Some(share) = share else {
         return (StatusCode::NOT_FOUND, "Link not found or revoked.").into_response();
@@ -75,18 +146,99 @@ async fn landing_page(Path(token): Path<String>, State(state): State<AppState>) 
             token = html_escape(&token)
         )
     };
+
+    let name = html_escape(&share.name);
+    let size = human_size(share.size);
+    let kind = kind_label(&share.name);
+    let subtitle = format!("{kind} · {size}");
+
+    // Open Graph / Twitter tags so chat apps render a rich preview. For
+    // password-free image shares the file itself becomes the preview image;
+    // protected shares never expose an og:image (it would leak the content).
+    let base = base_url(&headers);
+    let mut og = format!(
+        r#"<meta property="og:site_name" content="Tunneldrop">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{name}">
+<meta property="og:description" content="{desc}">"#,
+        name = name,
+        desc = html_escape(&format!("{subtitle} — download via Tunneldrop")),
+    );
+    if let Some(base) = &base {
+        og.push_str(&format!(
+            "\n<meta property=\"og:url\" content=\"{}/d/{}\">",
+            html_escape(base),
+            html_escape(&token)
+        ));
+    }
+    let card = if !needs_pw && is_image(&share.name) {
+        if let Some(base) = &base {
+            og.push_str(&format!(
+                "\n<meta property=\"og:image\" content=\"{base}/d/{token}/raw\">\
+                 \n<meta property=\"og:image:alt\" content=\"{name}\">",
+                base = html_escape(base),
+                token = html_escape(&token),
+                name = name,
+            ));
+        }
+        "summary_large_image"
+    } else {
+        "summary"
+    };
+    og.push_str(&format!("\n<meta name=\"twitter:card\" content=\"{card}\">"));
+
+    let lock = if needs_pw { "🔒 " } else { "" };
     let html = format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><title>{name}</title>
-<style>body{{font-family:system-ui;max-width:32rem;margin:4rem auto;text-align:center}}
-button{{padding:.6rem 1.2rem;font-size:1rem;cursor:pointer}}
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name}</title>
+{og}
+<style>body{{font-family:system-ui;max-width:32rem;margin:4rem auto;text-align:center;padding:0 1rem}}
+h1{{font-size:1.4rem;word-break:break-all}}
+.sub{{color:#666;margin:.2rem 0 1.5rem}}
+button{{padding:.6rem 1.2rem;font-size:1rem;cursor:pointer;border:0;border-radius:.4rem;background:#1c54d6;color:#fff}}
+a{{text-decoration:none}}
 input{{padding:.5rem;margin:.5rem;font-size:1rem}}</style></head>
-<body><h1>{name}</h1><p>{size}</p>
+<body><h1>{lock}{name}</h1><p class="sub">{subtitle}</p>
 {download_widget}</body></html>"#,
-        name = html_escape(&share.name),
-        size = human_size(share.size),
+        name = name,
+        og = og,
+        subtitle = html_escape(&subtitle),
+        lock = lock,
         download_widget = download_widget,
     );
     Html(html).into_response()
+}
+
+/// Serves the file inline (real content type, `inline` disposition) for use as
+/// a link-preview image and in-browser viewing. Refuses password-protected
+/// shares so protected content is never exposed without the password.
+async fn raw(Path(token): Path<String>, State(state): State<AppState>) -> Response {
+    let share = { state.registry.lock().unwrap().get(&token).cloned() };
+    let Some(share) = share else {
+        return (StatusCode::NOT_FOUND, "Link not found or revoked.").into_response();
+    };
+    if share.password_hash.is_some() {
+        return (StatusCode::NOT_FOUND, "Not available.").into_response();
+    }
+    let file = match tokio::fs::File::open(&share.file_path).await {
+        Ok(f) => f,
+        Err(_) => return (StatusCode::GONE, "File no longer available.").into_response(),
+    };
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+    (
+        [
+            (header::CONTENT_TYPE, content_type_for(&share.name).to_string()),
+            (header::CONTENT_LENGTH, share.size.to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("inline; filename=\"{}\"", sanitize_filename(&share.name)),
+            ),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -358,5 +510,106 @@ mod tests {
         let html = String::from_utf8_lossy(&body);
         assert!(html.contains(r#"method="post""#), "protected share must use POST form");
         assert!(html.contains(r#"type="password""#), "protected share must have password field");
+    }
+
+    #[tokio::test]
+    async fn landing_page_emits_og_tags() {
+        let (_keep, path) = temp_file(b"hi");
+        let share = Share::new("ogtok".into(), path, "report.pdf".into(), 2, None);
+        let app = build_router(state_with_share(share));
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/d/ogtok")
+                    .header("host", "x.trycloudflare.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains(r#"property="og:title" content="report.pdf""#));
+        assert!(html.contains("PDF document"), "subtitle should describe the kind");
+        // A non-image share must not advertise an og:image.
+        assert!(!html.contains("og:image"));
+    }
+
+    #[tokio::test]
+    async fn image_share_advertises_og_image() {
+        let (_keep, path) = temp_file(b"img");
+        let share = Share::new("imgtok".into(), path, "photo.png".into(), 3, None);
+        let app = build_router(state_with_share(share));
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/d/imgtok")
+                    .header("host", "x.trycloudflare.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(
+            html.contains(r#"content="https://x.trycloudflare.com/d/imgtok/raw""#),
+            "image share must point og:image at the /raw endpoint"
+        );
+        assert!(html.contains(r#"content="summary_large_image""#));
+    }
+
+    #[tokio::test]
+    async fn protected_image_share_has_no_og_image() {
+        let (_keep, path) = temp_file(b"img");
+        let hash = crate::password::hash_password("pw");
+        let share = Share::new("ptok".into(), path, "secret.png".into(), 3, Some(hash));
+        let app = build_router(state_with_share(share));
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/d/ptok")
+                    .header("host", "x.trycloudflare.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(!html.contains("og:image"), "protected share must not expose og:image");
+    }
+
+    #[tokio::test]
+    async fn raw_serves_image_inline_with_content_type() {
+        let (_keep, path) = temp_file(b"\x89PNG fake");
+        let share = Share::new("rawtok".into(), path, "p.png".into(), 9, None);
+        let app = build_router(state_with_share(share));
+        let res = app
+            .oneshot(Request::builder().uri("/d/rawtok/raw").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers().get("content-type").unwrap(), "image/png");
+        assert!(res
+            .headers()
+            .get("content-disposition")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("inline"));
+    }
+
+    #[tokio::test]
+    async fn raw_refuses_protected_share() {
+        let (_keep, path) = temp_file(b"secret");
+        let hash = crate::password::hash_password("pw");
+        let share = Share::new("rawp".into(), path, "s.png".into(), 6, Some(hash));
+        let app = build_router(state_with_share(share));
+        let res = app
+            .oneshot(Request::builder().uri("/d/rawp/raw").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 }

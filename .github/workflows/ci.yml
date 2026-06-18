@@ -64,7 +64,7 @@ jobs:
             artifact_glob: |
               src-tauri/target/release/bundle/appimage/*
               src-tauri/target/release/bundle/deb/*
-            artifact_name: LocalRemoteShare-linux-x86_64
+            artifact_name: Tunneldrop-linux-x86_64
 
           - platform: macos-arm
             os: macos-14
@@ -72,7 +72,7 @@ jobs:
             cf_dest: src-tauri/binaries/cloudflared-aarch64-apple-darwin
             cf_tarball: true
             artifact_glob: src-tauri/target/release/bundle/dmg/*.dmg
-            artifact_name: LocalRemoteShare-macos-arm64
+            artifact_name: Tunneldrop-macos-arm64
 
           - platform: windows
             os: windows-latest
@@ -80,7 +80,7 @@ jobs:
             cf_dest: src-tauri/binaries/cloudflared-x86_64-pc-windows-msvc.exe
             cf_tarball: false
             artifact_glob: src-tauri/target/release/bundle/msi/*.msi
-            artifact_name: LocalRemoteShare-windows-x86_64
+            artifact_name: Tunneldrop-windows-x86_64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -187,9 +187,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: LocalRemoteShare ${{ github.ref_name }}
+          name: Tunneldrop ${{ github.ref_name }}
           body: |
-            ## LocalRemoteShare ${{ github.ref_name }}
+            ## Tunneldrop ${{ github.ref_name }}
 
             Signed builds for all platforms. Download the file for your OS:
 

@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut tmpfile = tempfile::NamedTempFile::new()?;
     tmpfile.write_all(
-        b"Hello from LocalRemoteShare! This file was shared via Cloudflare tunnel.\n",
+        b"Hello from Tunneldrop! This file was shared via Cloudflare tunnel.\n",
     )?;
     let tmppath = tmpfile.path().to_path_buf();
     let token = state.add_share(tmppath, None)?;

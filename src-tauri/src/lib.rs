@@ -9,7 +9,7 @@ mod commands;
 use state::AppState;
 use std::net::SocketAddr;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::Manager;
 
@@ -74,18 +74,30 @@ pub fn run() {
             // compatible desktop environment (GNOME needs the AppIndicator Shell
             // extension). Build failure is non-fatal: the app continues without a
             // tray icon and window-close will quit instead of hide.
-            let icon = app.default_window_icon()
-                .expect("icon must be set in tauri.conf.json")
-                .clone();
+            // Dedicated monochrome tray glyph (not the colorful app icon, which
+            // is illegible at menu-bar size). On macOS it is flagged as a
+            // template image so the system tints it for light/dark menu bars,
+            // and we ship the @2x (44px) asset there; Windows/Linux trays use
+            // the smaller 32px glyph.
+            #[cfg(target_os = "macos")]
+            let tray_icon_bytes: &[u8] = include_bytes!("../icons/MenuIcon44.png");
+            #[cfg(not(target_os = "macos"))]
+            let tray_icon_bytes: &[u8] = include_bytes!("../icons/MenuIcon32.png");
+            let icon = tauri::image::Image::from_bytes(tray_icon_bytes)
+                .expect("embedded tray icon must decode");
 
             // On Linux, libloading opens libayatana-appindicator3.so.1 lazily
             // inside tray-icon. If the library is absent the Lazy initialiser
             // panics rather than returning an error, so we need catch_unwind.
             // On macOS and Windows build() returns Err (never panics).
             let tray_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                TrayIconBuilder::new()
+                let builder = TrayIconBuilder::new()
                     .icon(icon)
                     .menu(&menu)
+                    // Right-click shows the menu (Quit); left-click is reserved
+                    // for opening the window. Without this, a left-click would
+                    // pop the menu on some platforms.
+                    .show_menu_on_left_click(false)
                     .on_menu_event(|app, event| {
                         if event.id() == "quit" {
                             // Tear down the tunnel before exiting.
@@ -95,24 +107,34 @@ pub fn run() {
                             app.exit(0);
                         }
                     })
-                    .on_tray_icon_event(|tray, _event| {
-                        // Show the main window when the tray icon is clicked.
-                        if let Some(win) = tray.app_handle().get_webview_window("main") {
-                            let _ = win.show();
-                            let _ = win.set_focus();
+                    .on_tray_icon_event(|tray, event| {
+                        // Open the window only on a completed left click, not on
+                        // hover/move/enter events (which previously triggered it).
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            if let Some(win) = tray.app_handle().get_webview_window("main") {
+                                let _ = win.show();
+                                let _ = win.set_focus();
+                            }
                         }
-                    })
-                    .build(app)
+                    });
+                #[cfg(target_os = "macos")]
+                let builder = builder.icon_as_template(true);
+                builder.build(app)
             }));
 
             match tray_result {
                 Ok(Ok(_)) => tray_created.store(true, Ordering::SeqCst),
                 Ok(Err(e)) => eprintln!(
-                    "LocalRemoteShare: tray icon unavailable ({e}). \
+                    "Tunneldrop: tray icon unavailable ({e}). \
                      Closing the window will quit the app."
                 ),
                 Err(_) => eprintln!(
-                    "LocalRemoteShare: tray icon unavailable \
+                    "Tunneldrop: tray icon unavailable \
                      (libayatana-appindicator3 not found — install \
                      libayatana-appindicator3-1 and, on GNOME, the \
                      AppIndicator Shell extension). \

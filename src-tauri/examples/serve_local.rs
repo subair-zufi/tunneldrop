@@ -11,7 +11,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create a real temp file to share.
     let mut tmpfile = tempfile::NamedTempFile::new()?;
-    writeln!(tmpfile, "Hello from LocalRemoteShare!")?;
+    writeln!(tmpfile, "Hello from Tunneldrop!")?;
     writeln!(tmpfile, "File name : sample.txt")?;
     writeln!(tmpfile, "Served by : axum 0.7 inside Tauri 2")?;
     writeln!(tmpfile, "Tunnel    : Cloudflare quick tunnel (trycloudflare.com)")?;

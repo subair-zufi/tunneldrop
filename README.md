@@ -1,4 +1,4 @@
-# LocalRemoteShare
+# Tunneldrop
 
 A small cross-platform desktop app that turns any local file into a temporary,
 shareable HTTPS link. Drop a file onto the window, get a

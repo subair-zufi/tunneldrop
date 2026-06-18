@@ -81,5 +81,24 @@ getCurrentWebview().onDragDropEvent((event) => {
   }
 });
 
-// Initial render.
-invoke("list_shares").then(render);
+// Auto-refresh the list so download counts (and pending links) update without
+// any user action. Guarded so a slow/failed call never stacks up overlapping
+// refreshes. Paused while the window is hidden to avoid needless work.
+let refreshing = false;
+async function refresh() {
+  if (refreshing || document.hidden) return;
+  refreshing = true;
+  try {
+    render(await invoke("list_shares"));
+  } catch (_) {
+    // Ignore transient errors; the next tick will retry.
+  } finally {
+    refreshing = false;
+  }
+}
+
+// Initial render, then poll every 5 seconds.
+refresh();
+setInterval(refresh, 5000);
+// Refresh immediately when the window regains focus.
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
