@@ -187,17 +187,32 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: LocalRemoteShare ${{ github.ref_name }}
+          name: "LocalRemoteShare ${{ github.ref_name }} — Share files instantly via Cloudflare Tunnel"
           body: |
             ## LocalRemoteShare ${{ github.ref_name }}
 
-            Signed builds for all platforms. Download the file for your OS:
+            **Share any file from your Mac, Linux, or Windows machine with a single click — no cloud storage, no account, no upload limits.**
 
-            | Platform | File |
-            |---|---|
-            | macOS (Apple Silicon) | `*.dmg` — signed, opens without Gatekeeper warning |
-            | Linux | `.AppImage` (portable) or `.deb` (Debian/Ubuntu) |
-            | Windows | `.msi` installer |
+            LocalRemoteShare starts a local file server and punches a temporary public URL through a [Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/). The file never leaves your machine until someone downloads it.
+
+            ### Download
+
+            | Platform | File | Notes |
+            |---|---|---|
+            | macOS (Apple Silicon M1/M2/M3) | `*.dmg` | Signed with Developer ID — opens without Gatekeeper warning |
+            | Linux | `*.AppImage` | Portable, no install needed |
+            | Linux | `*.deb` | Debian / Ubuntu package |
+            | Windows | `*.msi` | Standard installer |
+
+            ### What's included
+            - Cloudflare `cloudflared` tunnel binary bundled — no separate install
+            - Optional password protection per share
+            - One-click copy of the share URL
+            - Tunnel stays alive until you revoke the share
+
+            ### Requirements
+            - macOS 13+, Ubuntu 22.04+ / Debian 11+, or Windows 10+
+            - Outbound internet access (port 443) for the Cloudflare tunnel
 
           files: release/*
           fail_on_unmatched_files: false
