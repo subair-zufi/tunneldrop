@@ -74,14 +74,6 @@ jobs:
             artifact_glob: src-tauri/target/release/bundle/dmg/*.dmg
             artifact_name: LocalRemoteShare-macos-arm64
 
-          - platform: macos-intel
-            os: macos-13
-            cf_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz
-            cf_dest: src-tauri/binaries/cloudflared-x86_64-apple-darwin
-            cf_tarball: true
-            artifact_glob: src-tauri/target/release/bundle/dmg/*.dmg
-            artifact_name: LocalRemoteShare-macos-x86_64
-
           - platform: windows
             os: windows-latest
             cf_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
@@ -203,11 +195,9 @@ jobs:
 
             | Platform | File |
             |---|---|
-            | macOS (Apple Silicon) | `*.dmg` from `LocalRemoteShare-macos-arm64` |
-            | macOS (Intel) | `*.dmg` from `LocalRemoteShare-macos-x86_64` |
+            | macOS (Apple Silicon) | `*.dmg` — signed, opens without Gatekeeper warning |
             | Linux | `.AppImage` (portable) or `.deb` (Debian/Ubuntu) |
             | Windows | `.msi` installer |
 
-            **macOS**: Signed with Developer ID — opens without Gatekeeper warning.
           files: release/*
           fail_on_unmatched_files: false
