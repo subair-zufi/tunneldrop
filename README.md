@@ -1,14 +1,47 @@
-# Tunneldrop
+<p align="center">
+  <img src="docs/banner.png" alt="Tunneldrop" width="640">
+</p>
 
-A small cross-platform desktop app that turns any local file into a temporary,
-shareable HTTPS link. Drop a file onto the window, get a
-`https://*.trycloudflare.com/d/<token>` link, send it to anyone — they download
-straight from your machine through a Cloudflare quick tunnel. Optional password
-protection. Revoke any time.
+<h1 align="center">Tunneldrop</h1>
+
+<p align="center">
+  Turn any local file into a temporary, shareable HTTPS link — no uploads to a
+  third party, the file never leaves your machine.
+</p>
+
+Drop a file onto the window, get a `https://*.trycloudflare.com/d/<token>` link,
+send it to anyone — they download straight from your machine through a Cloudflare
+quick tunnel. Optional password protection. Revoke any time.
 
 Built with [Tauri 2](https://tauri.app/) (Rust + plain HTML/CSS/JS), a small
 [axum](https://github.com/tokio-rs/axum) HTTP server, and
 [cloudflared](https://github.com/cloudflare/cloudflared) as a bundled sidecar.
+
+## Why Tunneldrop?
+
+With WhatsApp, Teams, email, or any cloud drive, your file is **uploaded once**
+to a third-party server, stored there, and then **downloaded again** by the
+recipient. That means the full file travels twice, sits on someone else's
+servers, and runs into size limits.
+
+Tunneldrop skips the middleman: the file **stays on your machine**, and the
+recipient downloads it **directly** over a secure HTTPS tunnel link — no
+third-party upload, no storage, and you can revoke the link any time.
+
+<p align="center">
+  <img src="docs/how-it-works.png" alt="How file sharing works: the usual way uploads to a cloud server and downloads again, while Tunneldrop serves the file directly from your computer over a secure HTTPS tunnel link." width="900">
+</p>
+
+| | The usual way (WhatsApp / Teams) | With Tunneldrop |
+|---|---|---|
+| **Where the file lives** | Copied onto a third-party server | Stays on your machine |
+| **Transfer** | Uploaded once, downloaded again (travels twice) | Downloaded directly via link |
+| **Size limits** | Imposed by the service | Only your connection |
+| **Control** | Lives on their servers | Revoke any time; gone on app quit |
+| **Privacy** | Stored by a third party | Never handed to a third party |
+
+> **Trade-off:** because the recipient pulls straight from your computer, your
+> machine must stay on and online until they finish downloading.
 
 ## Features
 
@@ -174,5 +207,4 @@ tests/                 Fake cloudflared scripts used by integration tests
 
 ## License
 
-No license has been declared yet. Treat this repository as "all rights
-reserved" until one is added.
+Released under the [MIT License](LICENSE). © 2026 Subair Zufi.

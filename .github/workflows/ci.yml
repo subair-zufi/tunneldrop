@@ -2,9 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: ["**"]
     tags: ["v*.*.*"]
   pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ── Unit tests (Linux only — logic is platform-neutral) ─────────────────────
@@ -52,6 +57,9 @@ jobs:
   build:
     name: Build (${{ matrix.platform }})
     needs: test
+    # Only build on main pushes (keep main releasable) and on version tags
+    # (so the release job has artifacts). Skipped for feature branches and PRs.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
