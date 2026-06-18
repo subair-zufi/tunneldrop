@@ -2,6 +2,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::mpsc;
 
 /// Supervises a single cloudflared child process and captures its public URL.
 pub struct TunnelManager {
@@ -26,7 +27,7 @@ impl TunnelManager {
     }
 
     /// Starts the tunnel pointed at the given local port and waits (up to ~15s)
-    /// for the public URL to appear in stdout. Returns the URL.
+    /// for the public URL to appear in stdout/stderr. Returns the URL.
     pub async fn start(&self, port: u16) -> anyhow::Result<String> {
         let mut cmd = Command::new(&self.program);
         if self.extra_args.is_empty() {
@@ -43,21 +44,63 @@ impl TunnelManager {
         let stderr = child.stderr.take().expect("piped stderr");
         *self.child.lock().unwrap() = Some(child);
 
-        let base_url = self.base_url.clone();
-        // cloudflared prints the URL to stderr in real life and our fake uses
-        // stdout; scan both.
-        let found = scan_for_url(stdout, stderr).await;
+        // Spawn background tasks that continuously drain stdout/stderr.
+        // Lines are forwarded to the channel for URL scanning; once the
+        // receiver is dropped (URL found or timeout), the tasks detect the
+        // closed channel and keep reading to prevent SIGPIPE/EPIPE — which
+        // would otherwise kill cloudflared mid-session and cause Error 1033.
+        let (tx, mut rx) = mpsc::channel::<Option<String>>(64);
+
+        let tx1 = tx.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        if tx1.send(Some(line)).await.is_err() {
+                            // Receiver gone (URL already found); drain silently.
+                            while lines.next_line().await.ok().flatten().is_some() {}
+                            return;
+                        }
+                    }
+                    _ => {
+                        let _ = tx1.send(None).await;
+                        return;
+                    }
+                }
+            }
+        });
+
+        let tx2 = tx;
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        if tx2.send(Some(line)).await.is_err() {
+                            while lines.next_line().await.ok().flatten().is_some() {}
+                            return;
+                        }
+                    }
+                    _ => {
+                        let _ = tx2.send(None).await;
+                        return;
+                    }
+                }
+            }
+        });
+
+        let found = scan_for_url(&mut rx).await;
+        // Dropping rx here signals drain tasks to switch to silent-drain mode.
+
         match found {
             Some(url) => {
-                *base_url.lock().unwrap() = Some(url.clone());
+                *self.base_url.lock().unwrap() = Some(url.clone());
                 Ok(url)
             }
             None => {
-                // The process exited before printing a URL. Reap it now so that
-                // is_running() correctly reports false (rather than racing with
-                // try_wait on a process that closed its pipes but hasn't fully
-                // exited yet from the OS's point of view).
-                // Drop the MutexGuard before awaiting to keep the future Send.
+                // The process exited or timed out before printing a URL. Reap it
+                // so is_running() correctly reports false on the next call.
                 let child = self.child.lock().unwrap().take();
                 if let Some(mut c) = child {
                     let _ = c.wait().await;
@@ -109,35 +152,27 @@ impl TunnelManager {
     }
 }
 
-async fn scan_for_url(
-    stdout: tokio::process::ChildStdout,
-    stderr: tokio::process::ChildStderr,
-) -> Option<String> {
-    let mut out = BufReader::new(stdout).lines();
-    let mut err = BufReader::new(stderr).lines();
+/// Reads lines from the channel until a trycloudflare.com URL is found,
+/// both streams EOF, or the 15-second deadline expires.
+async fn scan_for_url(rx: &mut mpsc::Receiver<Option<String>>) -> Option<String> {
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(15));
     tokio::pin!(deadline);
-    // Track per-stream EOF so a closed pipe (e.g. the child exited before
-    // printing a URL) doesn't busy-spin the select loop until the deadline.
-    let (mut out_done, mut err_done) = (false, false);
+    let mut eof_count = 0;
     loop {
-        if out_done && err_done {
-            return None; // process exited without printing a URL
+        if eof_count >= 2 {
+            return None;
         }
         tokio::select! {
             () = &mut deadline => return None,
-            line = out.next_line(), if !out_done => {
-                match line {
-                    Ok(Some(l)) => if let Some(u) = parse_tunnel_url(&l) { return Some(u); },
-                    Ok(None) => out_done = true,
-                    Err(_) => return None,
-                }
-            }
-            line = err.next_line(), if !err_done => {
-                match line {
-                    Ok(Some(l)) => if let Some(u) = parse_tunnel_url(&l) { return Some(u); },
-                    Ok(None) => err_done = true,
-                    Err(_) => return None,
+            msg = rx.recv() => {
+                match msg {
+                    Some(Some(line)) => {
+                        if let Some(u) = parse_tunnel_url(&line) {
+                            return Some(u);
+                        }
+                    }
+                    Some(None) => eof_count += 1, // one stream reached EOF
+                    None => return None,           // channel closed
                 }
             }
         }
