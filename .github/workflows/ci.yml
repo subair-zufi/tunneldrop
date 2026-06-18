@@ -38,8 +38,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          # Key includes the repo name so the cache (which bakes absolute build
+          # paths into src-tauri/target) is invalidated if the repo is renamed.
+          key: ${{ runner.os }}-cargo-v2-${{ github.event.repository.name }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-v2-${{ github.event.repository.name }}-
 
       - name: Fetch cloudflared sidecar (needed for build)
         run: |
@@ -114,8 +116,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-
+          # Key includes the repo name so the cache (which bakes absolute build
+          # paths into src-tauri/target) is invalidated if the repo is renamed.
+          key: ${{ runner.os }}-cargo-release-v2-${{ github.event.repository.name }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-release-v2-${{ github.event.repository.name }}-
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked

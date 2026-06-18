@@ -3,12 +3,12 @@
 # in via tauri-utils. Only run `cargo update -p alloc-no-stdlib` if `cargo build`
 # still passes afterward.
 [package]
-name = "local-remote-share"
-version = "0.1.0"
+name = "tunneldrop"
+version = "1.0.0"
 edition = "2021"
 
 [lib]
-name = "local_remote_share_lib"
+name = "tunneldrop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

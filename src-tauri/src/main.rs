@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    local_remote_share_lib::run();
+    tunneldrop_lib::run();
 }
