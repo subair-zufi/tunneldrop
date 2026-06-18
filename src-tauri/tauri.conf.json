@@ -25,6 +25,11 @@
     "targets": "all",
     "icon": ["icons/icon.png", "icons/icon.ico"],
     "externalBin": ["binaries/cloudflared"],
+    "macOS": {
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": "entitlements.plist"
+    },
     "linux": {
       "deb": {
         "depends": ["libayatana-appindicator3-1"]
