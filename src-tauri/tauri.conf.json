@@ -28,8 +28,7 @@
     "macOS": {
       "signingIdentity": null,
       "providerShortName": null,
-      "entitlements": "entitlements.plist",
-      "dmgLicensePath": null
+      "entitlements": "entitlements.plist"
     },
     "linux": {
       "deb": {
