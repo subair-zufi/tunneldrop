@@ -9,6 +9,11 @@
   third party, the file never leaves your machine.
 </p>
 
+<p align="center">
+  <a href="https://subair-zufi.github.io/tunneldrop/"><b>🌐 Website &amp; downloads</b></a> ·
+  <a href="https://github.com/subair-zufi/tunneldrop/releases/latest">Latest release</a>
+</p>
+
 Drop a file onto the window, get a `https://*.trycloudflare.com/d/<token>` link,
 send it to anyone — they download straight from your machine through a Cloudflare
 quick tunnel. Optional password protection. Revoke any time.
