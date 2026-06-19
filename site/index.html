@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tunneldrop — share any local file as a temporary link</title>
+<meta name="description" content="Tunneldrop turns any local file into a temporary, shareable HTTPS link. No uploads to a third party — the file streams straight from your machine. Free & open source for macOS, Windows and Linux.">
+
+<!-- Open Graph / Twitter -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="Tunneldrop — share any local file as a temporary link">
+<meta property="og:description" content="Turn any local file into a temporary HTTPS link. The file never leaves your machine; the recipient downloads it directly. Free & open source.">
+<meta property="og:image" content="banner.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="favicon.png" type="image/png">
+<style>
+  :root{
+    --green:#2f9e2a; --green-d:#1f7a1c; --ink:#16201a; --muted:#5b6b60;
+    --bg:#ffffff; --soft:#f4f8f4; --line:#e3ece4; --blue:#1c54d6;
+    --radius:16px; --shadow:0 10px 30px rgba(20,40,25,.08);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);background:var(--bg);line-height:1.55;-webkit-font-smoothing:antialiased}
+  a{color:var(--green-d);text-decoration:none}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 20px}
+  .center{text-align:center}
+  .muted{color:var(--muted)}
+
+  /* nav */
+  nav{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;max-width:1000px;margin:0 auto}
+  nav .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:1.15rem}
+  nav .brand img{width:30px;height:30px}
+  nav a.gh{border:1px solid var(--line);padding:8px 14px;border-radius:10px;color:var(--ink);font-weight:600;font-size:.92rem}
+  nav a.gh:hover{background:var(--soft)}
+
+  /* hero */
+  .hero{padding:36px 0 8px}
+  .hero img.banner{width:100%;max-width:560px;height:auto;display:block;margin:0 auto}
+  .hero h1{font-size:clamp(1.8rem,4.5vw,2.8rem);line-height:1.12;margin:.4em auto .25em;max-width:18ch}
+  .hero p.tag{font-size:clamp(1.02rem,2.4vw,1.25rem);max-width:46ch;margin:0 auto 1.4em;color:var(--muted)}
+
+  /* buttons */
+  .btn{display:inline-flex;align-items:center;gap:10px;background:var(--green);color:#fff;font-weight:700;
+    padding:14px 26px;border-radius:12px;font-size:1.05rem;border:0;cursor:pointer;box-shadow:var(--shadow);
+    transition:transform .08s ease, background .15s ease}
+  .btn:hover{background:var(--green-d);transform:translateY(-1px);color:#fff}
+  .btn .sub{font-weight:500;opacity:.85;font-size:.82rem}
+  .btn.secondary{background:#fff;color:var(--ink);border:1px solid var(--line);box-shadow:none}
+  .btn.secondary:hover{background:var(--soft);color:var(--ink)}
+  .hero .hint{margin-top:10px;font-size:.86rem}
+
+  section{padding:54px 0}
+  section h2{font-size:clamp(1.4rem,3.2vw,2rem);margin:0 0 .2em}
+  section.alt{background:var(--soft);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+
+  .flow-img{width:100%;height:auto;border-radius:var(--radius);border:1px solid var(--line);box-shadow:var(--shadow);margin-top:8px}
+
+  /* feature/steps grid */
+  .grid{display:grid;gap:18px;margin-top:26px}
+  .grid.cols-3{grid-template-columns:repeat(3,1fr)}
+  .grid.cols-4{grid-template-columns:repeat(4,1fr)}
+  .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:20px}
+  .card .ic{font-size:1.6rem;line-height:1}
+  .card h3{margin:.5em 0 .25em;font-size:1.05rem}
+  .card p{margin:0;font-size:.95rem;color:var(--muted)}
+  .step .n{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--green);color:#fff;font-weight:800;font-size:.95rem}
+
+  /* downloads */
+  #downloads .dl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:26px}
+  .dl{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:22px;display:flex;flex-direction:column;gap:6px;position:relative}
+  .dl.reco{border-color:var(--green);box-shadow:0 0 0 3px rgba(47,158,42,.12)}
+  .dl .os{font-size:1.7rem}
+  .dl h3{margin:.2em 0 0;font-size:1.15rem}
+  .dl .meta{font-size:.84rem;color:var(--muted);min-height:1.2em}
+  .dl .badge{position:absolute;top:14px;right:14px;background:var(--green);color:#fff;font-size:.7rem;font-weight:700;
+    padding:3px 9px;border-radius:999px;letter-spacing:.02em}
+  .dl .btn{margin-top:10px;justify-content:center;width:100%;font-size:.98rem;padding:12px 16px}
+  .dl .alt-link{font-size:.84rem;margin-top:4px}
+  .note{font-size:.86rem;color:var(--muted);margin-top:18px;text-align:center}
+
+  footer{padding:40px 0;border-top:1px solid var(--line);color:var(--muted);font-size:.9rem}
+  footer .wrap{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;align-items:center}
+
+  @media(max-width:760px){
+    .grid.cols-3,.grid.cols-4,#downloads .dl-grid{grid-template-columns:1fr}
+  }
+  .hidden{display:none !important}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="brand"><img src="favicon.png" alt="">Tunneldrop</span>
+  <a class="gh" href="https://github.com/subair-zufi/tunneldrop" target="_blank" rel="noopener">★ View on GitHub</a>
+</nav>
+
+<header class="hero center">
+  <div class="wrap">
+    <img class="banner" src="banner.png" alt="Tunneldrop">
+    <h1>Share any local file as a temporary link</h1>
+    <p class="tag">Drop a file, get an HTTPS link, send it to anyone. The file never
+      leaves your machine — no uploads to a third party. Optional password, revoke anytime.</p>
+    <a id="hero-btn" class="btn" href="https://github.com/subair-zufi/tunneldrop/releases/latest" target="_blank" rel="noopener">
+      <span>Download Tunneldrop</span>
+    </a>
+    <div class="hint muted">Free &amp; open source · macOS · Windows · Linux</div>
+  </div>
+</header>
+
+<!-- WHAT IT DOES -->
+<section id="how">
+  <div class="wrap center">
+    <h2>Why Tunneldrop?</h2>
+    <p class="muted" style="max-width:60ch;margin:.4em auto 0">
+      With WhatsApp, Teams or any cloud drive your file is <strong>uploaded</strong> to a third-party
+      server, stored there, then <strong>downloaded again</strong>. Tunneldrop skips the middleman:
+      the file stays on your machine and the recipient downloads it <strong>directly</strong> over a
+      secure HTTPS tunnel.
+    </p>
+    <img class="flow-img" src="how-it-works.png" alt="The usual way uploads a file to a cloud server then downloads it again; Tunneldrop serves the file directly from your computer over a secure HTTPS tunnel link.">
+  </div>
+</section>
+
+<!-- FLOW STEPS -->
+<section class="alt">
+  <div class="wrap">
+    <h2 class="center">How it works</h2>
+    <div class="grid cols-4">
+      <div class="card step"><span class="n">1</span><h3>Drop a file</h3><p>Drag a file onto the window, or pick one — no account, no setup.</p></div>
+      <div class="card step"><span class="n">2</span><h3>Get a link</h3><p>Tunneldrop opens a Cloudflare quick tunnel and hands you a <code>https://…/d/…</code> link.</p></div>
+      <div class="card step"><span class="n">3</span><h3>Share it</h3><p>Send the link anywhere. Add a password for anything sensitive; image links even show a preview.</p></div>
+      <div class="card step"><span class="n">4</span><h3>Revoke</h3><p>Revoke a link any time. Quit the app and every tunnel tears down instantly.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- TRAY / MENU SHORTCUT -->
+<section id="tray">
+  <div class="wrap">
+    <h2 class="center">Lives in your menu bar</h2>
+    <div class="grid cols-3">
+      <div class="card"><div class="ic">🖱️</div><h3>Left-click to open</h3><p>Click the menu-bar / tray icon to bring the window straight back to the front.</p></div>
+      <div class="card"><div class="ic">🧭</div><h3>Right-click for the menu</h3><p>Right-click the icon to reach <strong>Quit</strong>, which exits and tears down all tunnels.</p></div>
+      <div class="card"><div class="ic">🪟</div><h3>Close = hide</h3><p>Closing the window just hides Tunneldrop to the tray so your shares keep serving.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- DOWNLOADS -->
+<section id="downloads" class="alt">
+  <div class="wrap">
+    <h2 class="center">Download</h2>
+    <p class="center muted" id="dl-os-line">Pick your platform — we’ve highlighted the one for your system.</p>
+    <div class="dl-grid">
+
+      <div class="dl" data-os="macos">
+        <span class="badge hidden">Recommended</span>
+        <div class="os">🍎</div>
+        <h3>macOS</h3>
+        <div class="meta" data-meta>Apple Silicon · .dmg</div>
+        <a class="btn" data-dl href="https://github.com/subair-zufi/tunneldrop/releases/latest" target="_blank" rel="noopener">Download</a>
+      </div>
+
+      <div class="dl" data-os="windows">
+        <span class="badge hidden">Recommended</span>
+        <div class="os">🪟</div>
+        <h3>Windows</h3>
+        <div class="meta" data-meta>64-bit · .msi installer</div>
+        <a class="btn" data-dl href="https://github.com/subair-zufi/tunneldrop/releases/latest" target="_blank" rel="noopener">Download</a>
+      </div>
+
+      <div class="dl" data-os="linux">
+        <span class="badge hidden">Recommended</span>
+        <div class="os">🐧</div>
+        <h3>Linux</h3>
+        <div class="meta" data-meta>x86-64 · AppImage / .deb</div>
+        <a class="btn" data-dl href="https://github.com/subair-zufi/tunneldrop/releases/latest" target="_blank" rel="noopener">Download</a>
+        <a class="alt-link hidden" data-dl-alt href="#" target="_blank" rel="noopener">or get the .deb</a>
+      </div>
+
+    </div>
+    <p class="note" id="dl-note">Loading the latest release…</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>© <span id="year"></span> Subair Zufi · MIT License</span>
+    <span>
+      <a href="https://github.com/subair-zufi/tunneldrop" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="https://github.com/subair-zufi/tunneldrop/releases" target="_blank" rel="noopener">All releases</a> ·
+      <a href="https://github.com/subair-zufi/tunneldrop#readme" target="_blank" rel="noopener">Docs</a>
+    </span>
+  </div>
+</footer>
+
+<script>
+  const REPO = "subair-zufi/tunneldrop";
+  document.getElementById("year").textContent = new Date().getFullYear();
+
+  // ---- OS detection ----
+  function detectOS(){
+    const ua = (navigator.userAgent || "") + " " + ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "");
+    if (/Android/i.test(ua)) return "other";
+    if (/iPhone|iPad|iPod/i.test(ua)) return "other";
+    if (/Win/i.test(ua)) return "windows";
+    if (/Mac/i.test(ua)) return "macos";
+    if (/Linux|X11|CrOS/i.test(ua)) return "linux";
+    return "other";
+  }
+  const os = detectOS();
+  const osName = {macos:"macOS", windows:"Windows", linux:"Linux"}[os];
+
+  // Highlight the detected platform card + badge, and reorder it first.
+  if (osName){
+    const card = document.querySelector(`.dl[data-os="${os}"]`);
+    if (card){
+      card.classList.add("reco");
+      card.querySelector(".badge").classList.remove("hidden");
+      card.parentNode.prepend(card);
+      document.getElementById("dl-os-line").textContent =
+        `Looks like you’re on ${osName} — that download is highlighted below.`;
+    }
+  }
+
+  function humanSize(b){
+    if(!b) return "";
+    const u=["B","KB","MB","GB"]; let i=0,n=b;
+    while(n>=1024 && i<u.length-1){n/=1024;i++;}
+    return `${n.toFixed(1)} ${u[i]}`;
+  }
+
+  function setCard(osKey, asset, label){
+    const card = document.querySelector(`.dl[data-os="${osKey}"]`);
+    if(!card) return;
+    const btn = card.querySelector("[data-dl]");
+    const meta = card.querySelector("[data-meta]");
+    if(asset){
+      btn.href = asset.browser_download_url;
+      btn.removeAttribute("target"); // direct file download
+      btn.innerHTML = `Download <span class="sub">${humanSize(asset.size)}</span>`;
+      if(label) meta.textContent = label;
+    }
+  }
+
+  // ---- Pull the latest release assets from the GitHub API ----
+  fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {headers:{Accept:"application/vnd.github+json"}})
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(rel => {
+      const assets = rel.assets || [];
+      const by = ext => assets.find(a => a.name.toLowerCase().endsWith(ext));
+
+      const dmg = by(".dmg"), msi = by(".msi") || by(".exe"),
+            appimage = by(".appimage"), deb = by(".deb");
+
+      setCard("macos", dmg, "Apple Silicon · .dmg");
+      setCard("windows", msi, "64-bit · .msi installer");
+      setCard("linux", appimage || deb, appimage ? "x86-64 · AppImage" : "x86-64 · .deb");
+
+      // Secondary .deb link on the Linux card if both exist.
+      if (appimage && deb){
+        const alt = document.querySelector('.dl[data-os="linux"] [data-dl-alt]');
+        alt.href = deb.browser_download_url;
+        alt.textContent = `or get the .deb (${humanSize(deb.size)})`;
+        alt.classList.remove("hidden");
+      }
+
+      // Point the hero button at the recommended OS asset, if available.
+      const heroAsset = {macos:dmg, windows:msi, linux:(appimage||deb)}[os];
+      const hero = document.getElementById("hero-btn");
+      if (heroAsset){
+        hero.href = heroAsset.browser_download_url;
+        hero.removeAttribute("target");
+        hero.innerHTML = `<span>Download for ${osName}</span><span class="sub">${rel.tag_name} · ${humanSize(heroAsset.size)}</span>`;
+      } else if (osName) {
+        hero.innerHTML = `<span>Download Tunneldrop</span><span class="sub">${rel.tag_name}</span>`;
+      }
+
+      const any = dmg||msi||appimage||deb;
+      document.getElementById("dl-note").innerHTML = any
+        ? `Latest release: <a href="${rel.html_url}" target="_blank" rel="noopener">${rel.tag_name}</a> · need another build? See <a href="https://github.com/${REPO}/releases" target="_blank" rel="noopener">all releases</a>.`
+        : `No installable assets on the latest release yet — check <a href="https://github.com/${REPO}/releases" target="_blank" rel="noopener">the releases page</a>.`;
+    })
+    .catch(() => {
+      document.getElementById("dl-note").innerHTML =
+        `Couldn’t load the latest release automatically. Grab the installers from <a href="https://github.com/${REPO}/releases/latest" target="_blank" rel="noopener">the releases page</a>.`;
+    });
+</script>
+</body>
+</html>
