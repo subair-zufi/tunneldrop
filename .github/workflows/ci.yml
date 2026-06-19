@@ -63,6 +63,47 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+  # ── Release gate ─────────────────────────────────────────────────────────────
+  # Decides whether this run should publish a release and what tag to use.
+  # - version tag push  → release that tag
+  # - manual dispatch   → release the provided tag
+  # - push to main      → release "v<app version>" only if no such release exists
+  #                       yet (so a version bump in tauri.conf.json ships itself).
+  gate:
+    name: Release gate
+    needs: test
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.decide.outputs.tag }}
+      should_release: ${{ steps.decide.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.release_tag }}"
+            SHOULD=true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${{ github.ref_name }}"
+            SHOULD=true
+          else
+            VER=$(grep '"version"' src-tauri/tauri.conf.json | head -1 | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+            TAG="v$VER"
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              SHOULD=false   # already released this version
+            else
+              SHOULD=true
+            fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "should_release=$SHOULD" >> "$GITHUB_OUTPUT"
+          echo "Release gate → tag=$TAG should_release=$SHOULD"
+
   # ── Release builds ───────────────────────────────────────────────────────────
   build:
     name: Build (${{ matrix.platform }})
@@ -184,18 +225,18 @@ jobs:
           path: ${{ matrix.artifact_glob }}
           if-no-files-found: error
 
-  # ── GitHub Release (version tags or manual dispatch) ─────────────────────────
+  # ── GitHub Release (version tags, manual dispatch, or version bump on main) ──
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    needs: build
+    needs: [gate, build]
+    if: needs.gate.outputs.should_release == 'true'
     runs-on: ubuntu-22.04
     permissions:
       contents: write
-    # On a tag push the tag name comes from the ref; on a manual dispatch it
-    # comes from the release_tag input (the release action creates that tag).
+    # The release action creates this tag server-side at the built commit if it
+    # doesn't exist yet (used for the version-bump and dispatch paths).
     env:
-      RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+      RELEASE_TAG: ${{ needs.gate.outputs.tag }}
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
