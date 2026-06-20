@@ -142,12 +142,22 @@ jobs:
             artifact_glob: src-tauri/target/release/bundle/msi/*.msi
             artifact_name: Tunneldrop-windows-x86_64
 
+          - platform: linux-arm64
+            os: ubuntu-24.04-arm
+            cf_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64
+            cf_dest: src-tauri/binaries/cloudflared-aarch64-unknown-linux-gnu
+            cf_tarball: false
+            artifact_glob: |
+              src-tauri/target/release/bundle/appimage/*
+              src-tauri/target/release/bundle/deb/*
+            artifact_name: Tunneldrop-linux-arm64
+
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Linux system dependencies
-        if: matrix.platform == 'linux'
+        if: startsWith(matrix.platform, 'linux')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -263,7 +273,8 @@ jobs:
             | Platform | File |
             |---|---|
             | macOS (Apple Silicon) | `*.dmg` — signed, opens without Gatekeeper warning |
-            | Linux | `.AppImage` (portable) or `.deb` (Debian/Ubuntu) |
+            | Linux x86-64 | `.AppImage` (portable) or `.deb` (Debian/Ubuntu) |
+            | Linux ARM64 (Raspberry Pi 3/4/5) | `.AppImage` (portable) or `.deb` |
             | Windows | `.msi` installer |
 
           files: release/*
