@@ -138,6 +138,12 @@ curl -fsSL \
   -o src-tauri/binaries/cloudflared-x86_64-unknown-linux-gnu
 chmod +x src-tauri/binaries/cloudflared-x86_64-unknown-linux-gnu
 
+# Raspberry Pi / Linux ARM64 (Pi 3, 4, 5 running a 64-bit OS)
+curl -fsSL \
+  "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64" \
+  -o src-tauri/binaries/cloudflared-aarch64-unknown-linux-gnu
+chmod +x src-tauri/binaries/cloudflared-aarch64-unknown-linux-gnu
+
 # macOS Apple Silicon — copy from Homebrew
 cp "$(which cloudflared)" src-tauri/binaries/cloudflared-aarch64-apple-darwin
 chmod +x src-tauri/binaries/cloudflared-aarch64-apple-darwin
@@ -147,12 +153,13 @@ For other targets, grab the matching binary from
 [cloudflared releases](https://github.com/cloudflare/cloudflared/releases) and
 rename it using the Rust target-triple suffix Tauri expects:
 
-| Platform        | Required filename                            |
-|-----------------|----------------------------------------------|
-| macOS Apple Si  | `cloudflared-aarch64-apple-darwin`           |
-| macOS Intel     | `cloudflared-x86_64-apple-darwin`            |
-| Windows x64     | `cloudflared-x86_64-pc-windows-msvc.exe`     |
-| Linux x64       | `cloudflared-x86_64-unknown-linux-gnu`       |
+| Platform                        | Required filename                            |
+|---------------------------------|----------------------------------------------|
+| macOS Apple Silicon             | `cloudflared-aarch64-apple-darwin`           |
+| macOS Intel                     | `cloudflared-x86_64-apple-darwin`            |
+| Windows x64                     | `cloudflared-x86_64-pc-windows-msvc.exe`     |
+| Linux x86-64                    | `cloudflared-x86_64-unknown-linux-gnu`       |
+| Linux ARM64 (Raspberry Pi 3/4/5)| `cloudflared-aarch64-unknown-linux-gnu`      |
 
 Then build:
 

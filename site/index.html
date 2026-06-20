@@ -69,7 +69,7 @@
   .step .n{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--green);color:#fff;font-weight:800;font-size:.95rem}
 
   /* downloads */
-  #downloads .dl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:26px}
+  #downloads .dl-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:26px}
   .dl{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:22px;display:flex;flex-direction:column;gap:6px;position:relative}
   .dl.reco{border-color:var(--green);box-shadow:0 0 0 3px rgba(47,158,42,.12)}
   .dl .os{font-size:1.7rem}
@@ -106,7 +106,7 @@
     <a id="hero-btn" class="btn" href="https://github.com/subair-zufi/tunneldrop/releases/latest" target="_blank" rel="noopener">
       <span>Download Tunneldrop</span>
     </a>
-    <div class="hint muted">Free &amp; open source · macOS · Windows · Linux</div>
+    <div class="hint muted">Free &amp; open source · macOS · Windows · Linux · Raspberry Pi</div>
   </div>
 </header>
 
@@ -181,6 +181,15 @@
         <a class="alt-link hidden" data-dl-alt href="#" target="_blank" rel="noopener">or get the .deb</a>
       </div>
 
+      <div class="dl" data-os="linux-arm">
+        <span class="badge hidden">Recommended</span>
+        <div class="os">🍓</div>
+        <h3>Raspberry Pi</h3>
+        <div class="meta" data-meta>ARM64 · AppImage / .deb</div>
+        <a class="btn" data-dl href="https://github.com/subair-zufi/tunneldrop/releases/latest" target="_blank" rel="noopener">Download</a>
+        <a class="alt-link hidden" data-dl-alt href="#" target="_blank" rel="noopener">or get the .deb</a>
+      </div>
+
     </div>
     <p class="note" id="dl-note">Loading the latest release…</p>
   </div>
@@ -208,11 +217,14 @@
     if (/iPhone|iPad|iPod/i.test(ua)) return "other";
     if (/Win/i.test(ua)) return "windows";
     if (/Mac/i.test(ua)) return "macos";
-    if (/Linux|X11|CrOS/i.test(ua)) return "linux";
+    if (/Linux|X11|CrOS/i.test(ua)) {
+      if (/aarch64|arm64|armv[6-8]/i.test(ua)) return "linux-arm";
+      return "linux";
+    }
     return "other";
   }
   const os = detectOS();
-  const osName = {macos:"macOS", windows:"Windows", linux:"Linux"}[os];
+  const osName = {macos:"macOS", windows:"Windows", linux:"Linux", "linux-arm":"Raspberry Pi / Linux ARM64"}[os];
 
   // Highlight the detected platform card + badge, and reorder it first.
   if (osName){
@@ -251,25 +263,37 @@
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(rel => {
       const assets = rel.assets || [];
-      const by = ext => assets.find(a => a.name.toLowerCase().endsWith(ext));
+      const byExt = (ext, arch) => assets.find(a => {
+        const n = a.name.toLowerCase();
+        if (!n.endsWith(ext)) return false;
+        if (!arch) return true;
+        return arch === "arm" ? /aarch64|arm64/.test(n) : !/aarch64|arm64/.test(n);
+      });
 
-      const dmg = by(".dmg"), msi = by(".msi") || by(".exe"),
-            appimage = by(".appimage"), deb = by(".deb");
+      const dmg      = byExt(".dmg");
+      const msi      = byExt(".msi") || byExt(".exe");
+      const appimage = byExt(".appimage", "x86");
+      const deb      = byExt(".deb",      "x86");
+      const armimage = byExt(".appimage", "arm");
+      const armdeb   = byExt(".deb",      "arm");
 
-      setCard("macos", dmg, "Apple Silicon · .dmg");
-      setCard("windows", msi, "64-bit · .msi installer");
-      setCard("linux", appimage || deb, appimage ? "x86-64 · AppImage" : "x86-64 · .deb");
+      setCard("macos",     dmg,                "Apple Silicon · .dmg");
+      setCard("windows",   msi,                "64-bit · .msi installer");
+      setCard("linux",     appimage || deb,    appimage ? "x86-64 · AppImage" : "x86-64 · .deb");
+      setCard("linux-arm", armimage || armdeb, armimage ? "ARM64 · AppImage"  : "ARM64 · .deb");
 
-      // Secondary .deb link on the Linux card if both exist.
-      if (appimage && deb){
-        const alt = document.querySelector('.dl[data-os="linux"] [data-dl-alt]');
-        alt.href = deb.browser_download_url;
-        alt.textContent = `or get the .deb (${humanSize(deb.size)})`;
-        alt.classList.remove("hidden");
-      }
+      // Secondary .deb links when both AppImage and deb exist.
+      [["linux", deb, appimage], ["linux-arm", armdeb, armimage]].forEach(([key, d, img]) => {
+        if (img && d){
+          const alt = document.querySelector(`.dl[data-os="${key}"] [data-dl-alt]`);
+          alt.href = d.browser_download_url;
+          alt.textContent = `or get the .deb (${humanSize(d.size)})`;
+          alt.classList.remove("hidden");
+        }
+      });
 
       // Point the hero button at the recommended OS asset, if available.
-      const heroAsset = {macos:dmg, windows:msi, linux:(appimage||deb)}[os];
+      const heroAsset = {macos:dmg, windows:msi, linux:(appimage||deb), "linux-arm":(armimage||armdeb)}[os];
       const hero = document.getElementById("hero-btn");
       if (heroAsset){
         hero.href = heroAsset.browser_download_url;
@@ -279,7 +303,7 @@
         hero.innerHTML = `<span>Download Tunneldrop</span><span class="sub">${rel.tag_name}</span>`;
       }
 
-      const any = dmg||msi||appimage||deb;
+      const any = dmg||msi||appimage||deb||armimage||armdeb;
       document.getElementById("dl-note").innerHTML = any
         ? `Latest release: <a href="${rel.html_url}" target="_blank" rel="noopener">${rel.tag_name}</a> · need another build? See <a href="https://github.com/${REPO}/releases" target="_blank" rel="noopener">all releases</a>.`
         : `No installable assets on the latest release yet — check <a href="https://github.com/${REPO}/releases" target="_blank" rel="noopener">the releases page</a>.`;
