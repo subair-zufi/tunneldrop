@@ -39,6 +39,15 @@ impl TunnelManager {
         }
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
+        // Prevent a visible CMD window from appearing on Windows when cloudflared
+        // is launched as a child process.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
         let mut child = cmd.spawn()?;
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
