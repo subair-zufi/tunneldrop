@@ -17,6 +17,9 @@ li button { font-size: .8rem; margin-right: .4rem; cursor: pointer; }
   background: #e7f5ff; border: 1px solid #74c0fc; border-radius: 8px;
   padding: .5rem .6rem; margin-bottom: 1rem; font-size: .85rem; color: #1864ab;
 }
+/* The #id display:flex above outranks the UA [hidden] rule, so it must be
+   re-asserted with matching specificity or the banner never hides. */
+#update-banner[hidden] { display: none; }
 #update-text { flex: 1; }
 #update-dismiss { background: none; border: none; cursor: pointer; color: #1864ab; }
 .linklike {
