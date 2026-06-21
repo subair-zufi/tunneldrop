@@ -233,8 +233,11 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           # Required because tauri.conf.json sets bundle.createUpdaterArtifacts.
           # The build signs each updater bundle with this key and emits a .sig
-          # alongside it. The matching public key is baked into the app via
-          # plugins.updater.pubkey. Both secrets MUST be set or the build fails.
+          # alongside it; the matching public key is baked into the app via
+          # plugins.updater.pubkey. TAURI_SIGNING_PRIVATE_KEY must be set. The
+          # password var must always be present (even empty): the key here was
+          # generated without one, so the absent secret resolves to "" — exactly
+          # what an unprotected key expects.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: cargo tauri build
