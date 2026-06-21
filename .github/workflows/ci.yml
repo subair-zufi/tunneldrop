@@ -131,7 +131,10 @@ jobs:
             cf_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz
             cf_dest: src-tauri/binaries/cloudflared-aarch64-apple-darwin
             cf_tarball: true
-            artifact_glob: src-tauri/target/release/bundle/dmg/*.dmg
+            artifact_glob: |
+              src-tauri/target/release/bundle/dmg/*.dmg
+              src-tauri/target/release/bundle/macos/*.app.tar.gz
+              src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
             artifact_name: Tunneldrop-macos-arm64
 
           - platform: windows
@@ -139,7 +142,9 @@ jobs:
             cf_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
             cf_dest: src-tauri/binaries/cloudflared-x86_64-pc-windows-msvc.exe
             cf_tarball: false
-            artifact_glob: src-tauri/target/release/bundle/msi/*.msi
+            artifact_glob: |
+              src-tauri/target/release/bundle/msi/*.msi
+              src-tauri/target/release/bundle/msi/*.msi.sig
             artifact_name: Tunneldrop-windows-x86_64
 
           - platform: linux-arm64
@@ -226,6 +231,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Required because tauri.conf.json sets bundle.createUpdaterArtifacts.
+          # The build signs each updater bundle with this key and emits a .sig
+          # alongside it. The matching public key is baked into the app via
+          # plugins.updater.pubkey. Both secrets MUST be set or the build fails.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: cargo tauri build
 
       - name: Upload bundle artifact
@@ -256,9 +267,58 @@ jobs:
       - name: Flatten artifacts into release directory
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.dmg" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" \) \
-            -exec cp {} release/ \;
+          find artifacts -type f \( \
+            -name "*.dmg" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" \
+            -o -name "*.app.tar.gz" \
+            -o -name "*.sig" \
+          \) -exec cp {} release/ \;
           ls -lh release/
+
+      # Build the static updater manifest the app polls. No server/DB: it points
+      # at fixed release-asset URLs and embeds each bundle's signature (the .sig
+      # file's contents). GitHub's /releases/latest/download/latest.json always
+      # serves this from the newest release, which is the updater endpoint.
+      - name: Generate updater manifest (latest.json)
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE_TAG}"
+          VERSION="${TAG#v}"
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          cd release
+
+          platforms='{}'
+          add() {
+            # $1 = updater target key, $2 = bundle filename, $3 = sig filename
+            if [[ -f "$2" && -f "$3" ]]; then
+              platforms=$(jq -n \
+                --argjson p "$platforms" \
+                --arg k "$1" \
+                --arg url "$BASE/$2" \
+                --arg sig "$(cat "$3")" \
+                '$p + {($k): {signature: $sig, url: $url}}')
+              echo "  + $1 -> $2"
+            else
+              echo "  - $1 skipped (missing bundle or signature)"
+            fi
+          }
+
+          add darwin-aarch64 "$(ls *.app.tar.gz 2>/dev/null | head -1)"        "$(ls *.app.tar.gz.sig 2>/dev/null | head -1)"
+          add linux-x86_64   "$(ls *_amd64.AppImage 2>/dev/null | head -1)"    "$(ls *_amd64.AppImage.sig 2>/dev/null | head -1)"
+          add linux-aarch64  "$(ls *_aarch64.AppImage 2>/dev/null | head -1)"  "$(ls *_aarch64.AppImage.sig 2>/dev/null | head -1)"
+          add windows-x86_64 "$(ls *.msi 2>/dev/null | head -1)"               "$(ls *.msi.sig 2>/dev/null | head -1)"
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "Tunneldrop $TAG" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson platforms "$platforms" \
+            '{version: $version, notes: $notes, pub_date: $date, platforms: $platforms}' \
+            > latest.json
+
+          echo "── latest.json ──"
+          cat latest.json
+          # The raw .sig files don't need to be release assets once embedded.
+          rm -f *.sig
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

@@ -130,3 +130,82 @@ refresh();
 setInterval(refresh, 5000);
 // Refresh immediately when the window regains focus.
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+
+// ── Self-update ──────────────────────────────────────────────────────────────
+// Uses the Tauri updater plugin, which fetches a signed static manifest from
+// GitHub Releases (no API/server of ours), verifies it against the public key
+// baked into the app, downloads the new bundle and installs it — then we
+// relaunch. All feature-detected so the page still works in a plain browser
+// (e.g. the serve_local example) where the plugins aren't present.
+const updateBanner = document.getElementById("update-banner");
+const updateText = document.getElementById("update-text");
+const updateInstall = document.getElementById("update-install");
+const updateDismiss = document.getElementById("update-dismiss");
+const checkUpdatesBtn = document.getElementById("check-updates");
+
+let pendingUpdate = null;
+
+function showUpdateBanner(update) {
+  pendingUpdate = update;
+  updateText.textContent = `Update available: v${update.version}`;
+  updateBanner.hidden = false;
+}
+
+async function installUpdate() {
+  if (!pendingUpdate) return;
+  updateInstall.disabled = true;
+  try {
+    let total = 0, received = 0;
+    await pendingUpdate.downloadAndInstall((ev) => {
+      switch (ev.event) {
+        case "Started":
+          total = ev.data?.contentLength ?? 0;
+          setStatus("Downloading update…");
+          break;
+        case "Progress":
+          received += ev.data?.chunkLength ?? 0;
+          setStatus(total
+            ? `Downloading update… ${Math.round((received / total) * 100)}%`
+            : "Downloading update…");
+          break;
+        case "Finished":
+          setStatus("Installing update…");
+          break;
+      }
+    });
+    // Restart into the freshly installed version.
+    await window.__TAURI__.process.relaunch();
+  } catch (e) {
+    setStatus("Update failed: " + e);
+    updateInstall.disabled = false;
+  }
+}
+
+// `manual` = triggered by the user; surfaces "you're up to date" / errors that
+// we stay silent about on the automatic startup check.
+async function checkForUpdates(manual = false) {
+  const updater = window.__TAURI__?.updater;
+  if (!updater) {
+    if (manual) setStatus("Updates aren't available in this build.");
+    return;
+  }
+  try {
+    if (manual) setStatus("Checking for updates…");
+    const update = await updater.check();
+    if (update) {
+      showUpdateBanner(update);
+      if (manual) setStatus("");
+    } else if (manual) {
+      setStatus("You're on the latest version.");
+    }
+  } catch (e) {
+    if (manual) setStatus("Update check failed: " + e);
+  }
+}
+
+updateInstall.addEventListener("click", installUpdate);
+updateDismiss.addEventListener("click", () => { updateBanner.hidden = true; });
+checkUpdatesBtn.addEventListener("click", () => checkForUpdates(true));
+
+// Silent check shortly after launch so a waiting update surfaces on its own.
+setTimeout(() => checkForUpdates(false), 3000);

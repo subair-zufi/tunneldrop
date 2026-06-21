@@ -19,6 +19,10 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
+
+# Self-update: the updater plugin downloads & verifies signed releases; the
+# process plugin provides relaunch() so the app can restart after installing.
+# Desktop-only, but this app is desktop-only so no cfg gate is needed in Cargo.
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
@@ -27,6 +31,8 @@ rand = "0.8"
 hex = "0.4"
 argon2 = { version = "0.5", features = ["std"] }
 anyhow = "1"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [dev-dependencies]
 tempfile = "3"

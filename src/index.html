@@ -8,6 +8,11 @@
   </head>
   <body>
     <main>
+      <div id="update-banner" hidden>
+        <span id="update-text"></span>
+        <button id="update-install">Install &amp; Restart</button>
+        <button id="update-dismiss" title="Dismiss">✕</button>
+      </div>
       <div id="dropzone">Drag a file here, or <button id="pick">choose a file</button></div>
       <label id="pw-row">
         <input type="checkbox" id="use-pw" /> Password protect
@@ -15,6 +20,7 @@
       </label>
       <ul id="shares"></ul>
       <p id="status"></p>
+      <button id="check-updates" class="linklike">Check for updates</button>
     </main>
     <script type="module" src="main.js"></script>
   </body>
