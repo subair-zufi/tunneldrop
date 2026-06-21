@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "dialog:default",
+    "updater:default",
+    "process:default",
     {
       "identifier": "shell:allow-execute",
       "allow": [{ "name": "binaries/cloudflared", "sidecar": true }]

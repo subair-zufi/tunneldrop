@@ -13,6 +13,24 @@ usePw.addEventListener("change", () => { pwInput.disabled = !usePw.checked; });
 
 function setStatus(msg) { statusEl.textContent = msg; }
 
+// Tokens (and names) of the shares currently on screen, so we can tell when one
+// disappears between renders — i.e. it was revoked here, from another window, or
+// its tunnel went away — and announce it instead of having it silently vanish.
+let knownShares = new Map();
+let revokedTimer = null;
+
+function notifyRevoked(names) {
+  if (names.length === 0) return;
+  const label = names.length === 1
+    ? `“${names[0]}” was revoked and is no longer available.`
+    : `${names.length} shares were revoked.`;
+  setStatus(`🚫 ${label}`);
+  clearTimeout(revokedTimer);
+  revokedTimer = setTimeout(() => {
+    if (statusEl.textContent.startsWith("🚫")) setStatus("");
+  }, 5000);
+}
+
 function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
 }
@@ -43,7 +61,9 @@ function formatSize(bytes) {
 
 function render(shares) {
   sharesEl.innerHTML = "";
+  const current = new Map();
   for (const s of shares) {
+    current.set(s.token, s.name);
     const li = document.createElement("li");
     const link = s.link ?? null;
     const linkHtml = link
@@ -61,6 +81,14 @@ function render(shares) {
     li.querySelector(".revoke").onclick = () => revoke(s.token);
     sharesEl.appendChild(li);
   }
+
+  // Anything we knew about but that is gone now was revoked — surface it.
+  const revoked = [];
+  for (const [token, name] of knownShares) {
+    if (!current.has(token)) revoked.push(name);
+  }
+  knownShares = current;
+  notifyRevoked(revoked);
 }
 
 pickBtn.addEventListener("click", async () => {
@@ -102,3 +130,82 @@ refresh();
 setInterval(refresh, 5000);
 // Refresh immediately when the window regains focus.
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+
+// ── Self-update ──────────────────────────────────────────────────────────────
+// Uses the Tauri updater plugin, which fetches a signed static manifest from
+// GitHub Releases (no API/server of ours), verifies it against the public key
+// baked into the app, downloads the new bundle and installs it — then we
+// relaunch. All feature-detected so the page still works in a plain browser
+// (e.g. the serve_local example) where the plugins aren't present.
+const updateBanner = document.getElementById("update-banner");
+const updateText = document.getElementById("update-text");
+const updateInstall = document.getElementById("update-install");
+const updateDismiss = document.getElementById("update-dismiss");
+const checkUpdatesBtn = document.getElementById("check-updates");
+
+let pendingUpdate = null;
+
+function showUpdateBanner(update) {
+  pendingUpdate = update;
+  updateText.textContent = `Update available: v${update.version}`;
+  updateBanner.hidden = false;
+}
+
+async function installUpdate() {
+  if (!pendingUpdate) return;
+  updateInstall.disabled = true;
+  try {
+    let total = 0, received = 0;
+    await pendingUpdate.downloadAndInstall((ev) => {
+      switch (ev.event) {
+        case "Started":
+          total = ev.data?.contentLength ?? 0;
+          setStatus("Downloading update…");
+          break;
+        case "Progress":
+          received += ev.data?.chunkLength ?? 0;
+          setStatus(total
+            ? `Downloading update… ${Math.round((received / total) * 100)}%`
+            : "Downloading update…");
+          break;
+        case "Finished":
+          setStatus("Installing update…");
+          break;
+      }
+    });
+    // Restart into the freshly installed version.
+    await window.__TAURI__.process.relaunch();
+  } catch (e) {
+    setStatus("Update failed: " + e);
+    updateInstall.disabled = false;
+  }
+}
+
+// `manual` = triggered by the user; surfaces "you're up to date" / errors that
+// we stay silent about on the automatic startup check.
+async function checkForUpdates(manual = false) {
+  const updater = window.__TAURI__?.updater;
+  if (!updater) {
+    if (manual) setStatus("Updates aren't available in this build.");
+    return;
+  }
+  try {
+    if (manual) setStatus("Checking for updates…");
+    const update = await updater.check();
+    if (update) {
+      showUpdateBanner(update);
+      if (manual) setStatus("");
+    } else if (manual) {
+      setStatus("You're on the latest version.");
+    }
+  } catch (e) {
+    if (manual) setStatus("Update check failed: " + e);
+  }
+}
+
+updateInstall.addEventListener("click", installUpdate);
+updateDismiss.addEventListener("click", () => { updateBanner.hidden = true; });
+checkUpdatesBtn.addEventListener("click", () => checkForUpdates(true));
+
+// Silent check shortly after launch so a waiting update surfaces on its own.
+setTimeout(() => checkForUpdates(false), 3000);
