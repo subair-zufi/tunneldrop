@@ -13,6 +13,24 @@ usePw.addEventListener("change", () => { pwInput.disabled = !usePw.checked; });
 
 function setStatus(msg) { statusEl.textContent = msg; }
 
+// Tokens (and names) of the shares currently on screen, so we can tell when one
+// disappears between renders — i.e. it was revoked here, from another window, or
+// its tunnel went away — and announce it instead of having it silently vanish.
+let knownShares = new Map();
+let revokedTimer = null;
+
+function notifyRevoked(names) {
+  if (names.length === 0) return;
+  const label = names.length === 1
+    ? `“${names[0]}” was revoked and is no longer available.`
+    : `${names.length} shares were revoked.`;
+  setStatus(`🚫 ${label}`);
+  clearTimeout(revokedTimer);
+  revokedTimer = setTimeout(() => {
+    if (statusEl.textContent.startsWith("🚫")) setStatus("");
+  }, 5000);
+}
+
 function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
 }
@@ -43,7 +61,9 @@ function formatSize(bytes) {
 
 function render(shares) {
   sharesEl.innerHTML = "";
+  const current = new Map();
   for (const s of shares) {
+    current.set(s.token, s.name);
     const li = document.createElement("li");
     const link = s.link ?? null;
     const linkHtml = link
@@ -61,6 +81,14 @@ function render(shares) {
     li.querySelector(".revoke").onclick = () => revoke(s.token);
     sharesEl.appendChild(li);
   }
+
+  // Anything we knew about but that is gone now was revoked — surface it.
+  const revoked = [];
+  for (const [token, name] of knownShares) {
+    if (!current.has(token)) revoked.push(name);
+  }
+  knownShares = current;
+  notifyRevoked(revoked);
 }
 
 pickBtn.addEventListener("click", async () => {
