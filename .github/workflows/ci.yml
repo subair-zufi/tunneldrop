@@ -128,15 +128,18 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      - name: Cache Cargo registry
+      - name: Cache Cargo registry and the Tauri CLI
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cargo/bin
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
             src-tauri/target
-          key: ${{ runner.os }}-cargo-apk-v1-${{ github.event.repository.name }}-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-apk-v1-${{ github.event.repository.name }}-
+          key: ${{ runner.os }}-cargo-apk-v2-${{ github.event.repository.name }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-apk-v2-${{ github.event.repository.name }}-
 
       # Tauri's mobile tooling wants NDK_HOME explicitly; the runner ships one
       # or more NDKs under $ANDROID_HOME/ndk, so take the newest.
@@ -152,13 +155,17 @@ jobs:
           echo "NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$NDK_DIR" >> "$GITHUB_ENV"
 
-      # The npm CLI ships prebuilt binaries; `cargo install tauri-cli` would
-      # spend ten minutes compiling one.
+      # The cargo CLI rather than the faster-to-install npm one. Gradle re-invokes
+      # whichever CLI ran `init` from inside its own build task, and it records
+      # the npm one as `node <project>/tauri` — a path that only resolves for a
+      # local node_modules install. This repo has no package.json and no reason
+      # to grow one, so use the binary that is on PATH by name. It is cached
+      # above, so only the first run pays for the compile.
       - name: Install Tauri CLI
-        run: npm install -g "@tauri-apps/cli@^2"
+        run: cargo install tauri-cli --version "^2" --locked
 
       - name: Generate the Android project
-        run: tauri android init
+        run: cargo tauri android init
 
       - name: Apply project patches
         run: bash scripts/patch-android-project.sh
@@ -169,7 +176,7 @@ jobs:
         run: bash scripts/build-cloudflared-android.sh
 
       - name: Build APK
-        run: tauri android build --apk --debug --target aarch64
+        run: cargo tauri android build --apk --debug --target aarch64
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
