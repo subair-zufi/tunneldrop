@@ -94,6 +94,90 @@ jobs:
         working-directory: src-tauri
         run: cargo check --target aarch64-linux-android
 
+  # ── Android APK (test build) ────────────────────────────────────────────────
+  # Produces a debug-signed, arm64-only APK for sideloading onto a phone, and
+  # uploads it as a run artifact. Not part of the release pipeline: the Android
+  # port is unfinished (see docs/android.md) and this is here so the thing can
+  # be tried on real hardware.
+  #
+  # The Gradle project is not committed — `tauri android init` regenerates it on
+  # every run and scripts/patch-android-project.sh re-applies the two settings
+  # the template cannot know about.
+  android-apk:
+    name: Android APK (debug, arm64)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # AGP 8 needs JDK 17.
+      - name: Install JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # cloudflared is built from source for Android; see the script for why a
+      # release binary will not do.
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-apk-v1-${{ github.event.repository.name }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-apk-v1-${{ github.event.repository.name }}-
+
+      # Tauri's mobile tooling wants NDK_HOME explicitly; the runner ships one
+      # or more NDKs under $ANDROID_HOME/ndk, so take the newest.
+      - name: Locate Android NDK
+        run: |
+          NDK_DIR="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -z "$NDK_DIR" ]; then
+            echo "No NDK preinstalled; installing one."
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" >/dev/null
+            NDK_DIR="$ANDROID_HOME/ndk/27.0.12077973"
+          fi
+          echo "Using NDK at $NDK_DIR"
+          echo "NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$NDK_DIR" >> "$GITHUB_ENV"
+
+      # The npm CLI ships prebuilt binaries; `cargo install tauri-cli` would
+      # spend ten minutes compiling one.
+      - name: Install Tauri CLI
+        run: npm install -g "@tauri-apps/cli@^2"
+
+      - name: Generate the Android project
+        run: tauri android init
+
+      - name: Apply project patches
+        run: scripts/patch-android-project.sh
+
+      - name: Build the bundled cloudflared
+        env:
+          ABIS: arm64-v8a
+        run: scripts/build-cloudflared-android.sh
+
+      - name: Build APK
+        run: tauri android build --apk --debug --target aarch64
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tunneldrop-android-arm64-debug
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
   # ── Release gate ─────────────────────────────────────────────────────────────
   # Decides whether this run should publish a release and what tag to use.
   # - version tag push  → release that tag
