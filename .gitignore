@@ -2,3 +2,6 @@
 .idea/
 .vscode/settings.json
 node_modules/
+
+# Checkout used by scripts/build-cloudflared-android.sh.
+/target/

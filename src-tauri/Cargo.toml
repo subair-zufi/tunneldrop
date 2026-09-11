@@ -19,10 +19,6 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
-
-# Self-update: the updater plugin downloads & verifies signed releases; the
-# process plugin provides relaunch() so the app can restart after installing.
-# Desktop-only, but this app is desktop-only so no cfg gate is needed in Cargo.
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
@@ -31,8 +27,24 @@ rand = "0.8"
 hex = "0.4"
 argon2 = { version = "0.5", features = ["std"] }
 anyhow = "1"
+
+# Self-update: the updater plugin downloads & verifies signed releases; the
+# process plugin provides relaunch() so the app can restart after installing.
+# Desktop-only — on mobile updates come from the store or a sideloaded package,
+# and the updater drags in `ring`, whose build script needs an NDK C toolchain
+# the Android build has no reason to require. Cargo target sections are resolved
+# before build scripts run, so Tauri's `desktop` cfg is not available here and
+# the three desktop OSes have to be spelled out.
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+
+# Android: finding the bundled cloudflared means asking the JVM for the app's
+# nativeLibraryDir, which is a JNI call against the Activity context that
+# ndk-context hands us.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

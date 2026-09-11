@@ -63,6 +63,37 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+  # ── Android type-check ──────────────────────────────────────────────────────
+  # Keeps the mobile target compiling while the Android port is in progress.
+  # `cargo check` only type-checks, so no NDK and no Android SDK are needed —
+  # it catches the things that actually break: a desktop-only API creeping out
+  # of its cfg gate, or a capability asking for a plugin that mobile lacks.
+  # It does NOT prove the app links or runs; that needs the full toolchain.
+  android-check:
+    name: Android type-check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-android-v1-${{ github.event.repository.name }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-android-v1-${{ github.event.repository.name }}-
+
+      - name: Type-check for aarch64-linux-android
+        working-directory: src-tauri
+        run: cargo check --target aarch64-linux-android
+
   # ── Release gate ─────────────────────────────────────────────────────────────
   # Decides whether this run should publish a release and what tag to use.
   # - version tag push  → release that tag

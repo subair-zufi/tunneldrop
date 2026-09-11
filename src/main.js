@@ -207,5 +207,10 @@ updateInstall.addEventListener("click", installUpdate);
 updateDismiss.addEventListener("click", () => { updateBanner.hidden = true; });
 checkUpdatesBtn.addEventListener("click", () => checkForUpdates(true));
 
+// No updater plugin (mobile builds, or the plain-browser serve_local example):
+// hide the button rather than offer an action that can only report itself
+// unavailable.
+if (!window.__TAURI__?.updater) checkUpdatesBtn.hidden = true;
+
 // Silent check shortly after launch so a waiting update surfaces on its own.
 setTimeout(() => checkForUpdates(false), 3000);
