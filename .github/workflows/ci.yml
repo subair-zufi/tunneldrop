@@ -161,12 +161,12 @@ jobs:
         run: tauri android init
 
       - name: Apply project patches
-        run: scripts/patch-android-project.sh
+        run: bash scripts/patch-android-project.sh
 
       - name: Build the bundled cloudflared
         env:
           ABIS: arm64-v8a
-        run: scripts/build-cloudflared-android.sh
+        run: bash scripts/build-cloudflared-android.sh
 
       - name: Build APK
         run: tauri android build --apk --debug --target aarch64
@@ -175,7 +175,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tunneldrop-android-arm64-debug
-          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          path: src-tauri/gen/android/**/outputs/apk/**/*.apk
           if-no-files-found: error
 
   # ── Release gate ─────────────────────────────────────────────────────────────

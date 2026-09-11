@@ -1,11 +1,34 @@
-# Android port — spike notes
+# Android port — notes
 
-Status: **groundwork only.** There is no Android app yet. This is steps 1–2 of
-the port: the Rust core compiles for Android, and we have a cloudflared binary
-that an Android device can actually execute. Nothing here has run on a device.
+Status: **an APK builds; nothing has been run on a device.** CI produces a
+debug-signed arm64 APK you can sideload (see "Getting an APK" below). Whether it
+works once installed is exactly the open question — none of the Android-specific
+code has ever executed.
 
-Everything below was done without an Android SDK or NDK installed, which is why
-it stops where it does — `tauri android init` and any real build need both.
+Do not expect a finished app. In particular there is no foreground service yet,
+so a transfer only survives while Tunneldrop is open on screen.
+
+## Getting an APK
+
+Every CI run builds one. Open the run on the Actions tab, and download the
+`tunneldrop-android-arm64-debug` artifact from the summary page — it unzips to
+an APK. It is debug-signed, so Android will ask you to allow installing from
+your browser or file manager. arm64 only; it will not install on an emulator
+image built for x86_64.
+
+Locally, with `ANDROID_HOME` and `NDK_HOME` set:
+
+```bash
+cargo install tauri-cli --version "^2"   # or: npm i -g @tauri-apps/cli@^2
+cargo tauri android init
+scripts/patch-android-project.sh         # must run after every init
+scripts/build-cloudflared-android.sh
+cargo tauri android build --apk --debug --target aarch64
+```
+
+The generated project under `src-tauri/gen/android` is not committed: CI
+regenerates and re-patches it on every build, so the patch script is the source
+of truth for anything the template cannot know (see below).
 
 ## What is verified
 
@@ -62,60 +85,50 @@ by asking the JVM for `ApplicationInfo.nativeLibraryDir` over JNI. The rest of
 `tunnel.rs` — spawn, scrape the `trycloudflare.com` URL out of stderr, kill on
 revoke — should work unchanged, since it is plain `tokio::process`.
 
+**Picked files are read through their descriptor, not a path.**
+
+The Android picker returns a `content://` URI. There is no filesystem path
+behind it — the app is granted access to a descriptor the provider opens on its
+behalf — so `std::fs::metadata` on it fails, which is what would have made the
+first APK useless.
+
+`android_fs::open_content_uri` asks the ContentResolver for a
+`ParcelFileDescriptor`, takes ownership of the fd with `detachFd`, and reads the
+size from `getStatSize` and the name from `OpenableColumns`. `Share` now holds a
+`ShareSource` — a path on desktop, an owned fd on Android — and each download
+re-opens it through `/proc/self/fd/N` so two people pulling the same share do
+not share a read offset. Nothing is copied: a 4 GB video is served where it
+lies, which is the whole point of the app.
+
 ## What is not verified
 
-- **That the tunnel actually comes up on a device.** No SDK, no emulator, no
-  device here. The binary is the right shape; that it runs and reaches the
-  Cloudflare edge from inside an app sandbox is the next thing to prove.
-- **That the app links.** `cargo check` stops before the linker.
-- **Anything about the UI.** The window is still sized for a 420×540 desktop
-  window and drag-and-drop is the only way in besides the file picker.
+Everything above is compile-time evidence. **No Android code in this repository
+has ever run.** Specifically unknown:
+
+- **Whether the app starts at all.** It links now, which `cargo check` never
+  proved.
+- **Whether cloudflared spawns from nativeLibraryDir**, and whether a quick
+  tunnel establishes from inside an app sandbox.
+- **Whether the JNI is right.** A wrong method signature compiles perfectly and
+  fails at runtime. `open_content_uri` and `native_library_dir` are the two
+  places this bites.
+- **The UI.** Still laid out for a 420×540 desktop window; drag-and-drop is
+  meaningless on a phone and the only way in is the file picker.
 
 ## Next steps
 
-1. **Generate the Gradle project.** With `ANDROID_HOME` and `NDK_HOME` set:
-   `cargo install tauri-cli --version "^2"` then `cargo tauri android init`.
-   Then patch two things or the cloudflared binary will be packaged but not
-   executable:
+1. **Foreground service.** The moment the user leaves the app, the process is
+   frozen and the transfer dies — today a share only works while Tunneldrop is
+   on screen. Serving needs a foreground service (`dataSync` type — Android 14
+   wants a declared type and a justification), a persistent notification, a
+   partial wake lock, and realistically a prompt to exempt the app from battery
+   optimisation. This is the part with no Rust equivalent and the most risk.
 
-   ```kotlin
-   // gen/android/app/build.gradle.kts
-   android { packaging { jniLibs { useLegacyPackaging = true } } }
-   ```
-   ```xml
-   <!-- gen/android/app/src/main/AndroidManifest.xml -->
-   <application android:extractNativeLibs="true" …>
-   ```
-
-   Since AGP 4.2 the default is to leave `.so` files compressed in the APK and
-   map them straight out of it, which is fine for real libraries but leaves no
-   file on disk to exec. Also add `<uses-permission android:name="android.permission.INTERNET" />`.
-
-   Then `scripts/build-cloudflared-android.sh && cargo tauri android dev`.
-
-2. **Content URIs.** `create_share` takes a path and `AppState::add_share`
-   calls `std::fs::metadata` on it. The Android file picker returns a
-   `content://` URI, so that call fails. The fix is to stop storing a path:
-   take a `ParcelFileDescriptor` from `ContentResolver.openFileDescriptor`, pass
-   the raw fd to Rust, and read name and size from `OpenableColumns`.
-   `Share.file_path` becomes a handle — path on desktop, owned fd on Android —
-   and each download in `server.rs` must `dup` the fd and seek to 0, since
-   concurrent requests would otherwise share one file offset. Copying into app
-   cache instead is far simpler but duplicates the whole file on disk, which
-   defeats the point for a 4 GB video.
-
-3. **Foreground service.** The moment the user leaves the app, the process is
-   frozen and the transfer dies. Serving needs a foreground service
-   (`dataSync` type — Android 14 wants a declared type and a justification), a
-   persistent notification, a partial wake lock, and realistically a prompt to
-   exempt the app from battery optimisation. This is the part with no Rust
-   equivalent and the most risk.
-
-4. **Mobile UI**, and an `ACTION_SEND` intent filter so Tunneldrop appears in
+2. **Mobile UI**, and an `ACTION_SEND` intent filter so Tunneldrop appears in
    the system share sheet — which is the natural way to start a share on a
    phone, far more so than a file picker.
 
-5. **Distribution.** Play Store review can be prickly about an app that serves
+3. **Distribution.** Play Store review can be prickly about an app that serves
    arbitrary user files over a public URL and ships a bundled network binary;
    the APK next to the desktop builds on GitHub Releases may be the smoother
    path. Note there is no in-app updater on mobile.

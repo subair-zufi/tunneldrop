@@ -17,15 +17,28 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="${ANDROID_DIR:-$REPO_ROOT/src-tauri/gen/android}"
-GRADLE_FILE="$ANDROID_DIR/app/build.gradle.kts"
-MANIFEST="$ANDROID_DIR/app/src/main/AndroidManifest.xml"
 
 [ -d "$ANDROID_DIR" ] || {
   echo "error: $ANDROID_DIR not found — run 'cargo tauri android init' first" >&2
   exit 1
 }
-[ -f "$GRADLE_FILE" ] || { echo "error: $GRADLE_FILE not found" >&2; exit 1; }
-[ -f "$MANIFEST" ] || { echo "error: $MANIFEST not found" >&2; exit 1; }
+
+# Tauri has generated the app module both at gen/android/app and one level
+# deeper at gen/android/<project>/app depending on version, so find it rather
+# than guessing.
+GRADLE_FILE="$(find "$ANDROID_DIR" -maxdepth 3 -path '*/app/build.gradle.kts' | head -1)"
+MANIFEST="$(find "$ANDROID_DIR" -maxdepth 6 -path '*/app/src/main/AndroidManifest.xml' | head -1)"
+
+[ -n "$GRADLE_FILE" ] || {
+  echo "error: no app/build.gradle.kts under $ANDROID_DIR" >&2
+  find "$ANDROID_DIR" -maxdepth 3 -type d >&2
+  exit 1
+}
+[ -n "$MANIFEST" ] || {
+  echo "error: no app/src/main/AndroidManifest.xml under $ANDROID_DIR" >&2
+  exit 1
+}
+echo "==> app module: $(dirname "$GRADLE_FILE")"
 
 # ── 1a. useLegacyPackaging ───────────────────────────────────────────────────
 if grep -q "useLegacyPackaging" "$GRADLE_FILE"; then

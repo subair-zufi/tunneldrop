@@ -34,8 +34,22 @@ CLOUDFLARED_REF="${CLOUDFLARED_REF:-2026.9.1}"
 # "armeabi-v7a" if you care about 32-bit devices.
 ABIS="${ABIS:-arm64-v8a x86_64}"
 
-JNILIBS_DIR="${JNILIBS_DIR:-$REPO_ROOT/src-tauri/gen/android/app/src/main/jniLibs}"
 SRC_DIR="${SRC_DIR:-$REPO_ROOT/target/cloudflared-src}"
+
+# Drop the binary next to the generated app module's manifest. Tauri has put
+# that module both at gen/android/app and one level deeper depending on
+# version, so find it; before `tauri android init` has ever run there is
+# nothing to find and the conventional path is created.
+ANDROID_DIR="${ANDROID_DIR:-$REPO_ROOT/src-tauri/gen/android}"
+if [ -z "${JNILIBS_DIR:-}" ]; then
+  APP_MANIFEST="$(find "$ANDROID_DIR" -maxdepth 6 -path '*/app/src/main/AndroidManifest.xml' 2>/dev/null | head -1)"
+  if [ -n "$APP_MANIFEST" ]; then
+    JNILIBS_DIR="$(dirname "$APP_MANIFEST")/jniLibs"
+  else
+    echo "note: no generated Android project yet; using the conventional path"
+    JNILIBS_DIR="$ANDROID_DIR/app/src/main/jniLibs"
+  fi
+fi
 
 command -v go >/dev/null || { echo "error: go is not installed" >&2; exit 1; }
 
