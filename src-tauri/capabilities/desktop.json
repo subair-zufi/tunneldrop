@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Self-update permissions. Desktop-only: the updater and process plugins are not compiled into mobile builds, where updates come from the store or a sideloaded package, so requesting their permissions there fails the build.",
+  "windows": ["main"],
+  "platforms": ["linux", "macOS", "windows"],
+  "permissions": ["updater:default", "process:default"]
+}

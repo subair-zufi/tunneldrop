@@ -52,6 +52,34 @@ async function revoke(token) {
   render(shares);
 }
 
+// The async clipboard API needs a permission some Android WebViews refuse, so
+// fall back to the old selection-based copy before giving up. Getting the link
+// out of the app is the entire point; failing silently is not an option.
+async function copyLink(link) {
+  try {
+    await navigator.clipboard.writeText(link);
+    setStatus("Link copied.");
+    return;
+  } catch (_) {
+    // fall through
+  }
+  const scratch = document.createElement("textarea");
+  scratch.value = link;
+  scratch.setAttribute("readonly", "");
+  scratch.style.position = "fixed";
+  scratch.style.opacity = "0";
+  document.body.appendChild(scratch);
+  scratch.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (_) {
+    copied = false;
+  }
+  scratch.remove();
+  setStatus(copied ? "Link copied." : "Couldn't copy — long-press the link to select it.");
+}
+
 function formatSize(bytes) {
   const units = ["B", "KB", "MB", "GB"];
   let size = bytes, u = 0;
@@ -77,7 +105,7 @@ function render(shares) {
         <button class="revoke">Revoke</button>
         <small>${s.has_password ? "🔒 " : ""}${s.download_count} downloads</small>
       </div>`;
-    li.querySelector(".copy").onclick = () => { if (link) navigator.clipboard.writeText(link); };
+    li.querySelector(".copy").onclick = () => { if (link) copyLink(link); };
     li.querySelector(".revoke").onclick = () => revoke(s.token);
     sharesEl.appendChild(li);
   }
@@ -96,18 +124,30 @@ pickBtn.addEventListener("click", async () => {
   if (typeof path === "string") createShare(path);
 });
 
-// Tauri file drop events.
-getCurrentWebview().onDragDropEvent((event) => {
-  if (event.payload.type === "over") {
-    dropzone.classList.add("over");
-  } else if (event.payload.type === "drop") {
-    dropzone.classList.remove("over");
-    const paths = event.payload.paths;
-    if (paths && paths.length > 0) createShare(paths[0]);
-  } else {
-    dropzone.classList.remove("over");
-  }
-});
+// Tauri file drop events. There is nothing to drag on a phone, and the API may
+// not exist there at all — a throw here would take the rest of this module down
+// with it, including the refresh loop below, so it is contained.
+try {
+  getCurrentWebview().onDragDropEvent((event) => {
+    if (event.payload.type === "over") {
+      dropzone.classList.add("over");
+    } else if (event.payload.type === "drop") {
+      dropzone.classList.remove("over");
+      const paths = event.payload.paths;
+      if (paths && paths.length > 0) createShare(paths[0]);
+    } else {
+      dropzone.classList.remove("over");
+    }
+  });
+} catch (e) {
+  console.warn("drag-and-drop unavailable:", e);
+}
+
+// Touch platforms have no drag source, so do not invite one.
+if (/Android/i.test(navigator.userAgent)) {
+  dropzone.innerHTML = "";
+  dropzone.appendChild(pickBtn);
+}
 
 // Auto-refresh the list so download counts (and pending links) update without
 // any user action. Guarded so a slow/failed call never stacks up overlapping
@@ -206,6 +246,11 @@ async function checkForUpdates(manual = false) {
 updateInstall.addEventListener("click", installUpdate);
 updateDismiss.addEventListener("click", () => { updateBanner.hidden = true; });
 checkUpdatesBtn.addEventListener("click", () => checkForUpdates(true));
+
+// No updater plugin (mobile builds, or the plain-browser serve_local example):
+// hide the button rather than offer an action that can only report itself
+// unavailable.
+if (!window.__TAURI__?.updater) checkUpdatesBtn.hidden = true;
 
 // Silent check shortly after launch so a waiting update surfaces on its own.
 setTimeout(() => checkForUpdates(false), 3000);

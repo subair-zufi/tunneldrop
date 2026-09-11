@@ -221,8 +221,8 @@ async fn raw(Path(token): Path<String>, State(state): State<AppState>) -> Respon
     if share.password_hash.is_some() {
         return (StatusCode::NOT_FOUND, "Not available.").into_response();
     }
-    let file = match tokio::fs::File::open(&share.file_path).await {
-        Ok(f) => f,
+    let file = match share.source.open() {
+        Ok(f) => tokio::fs::File::from_std(f),
         Err(_) => return (StatusCode::GONE, "File no longer available.").into_response(),
     };
     let stream = ReaderStream::new(file);
@@ -267,8 +267,8 @@ async fn download(
         }
     }
 
-    let file = match tokio::fs::File::open(&share.file_path).await {
-        Ok(f) => f,
+    let file = match share.source.open() {
+        Ok(f) => tokio::fs::File::from_std(f),
         Err(_) => return (StatusCode::GONE, "File no longer available.").into_response(),
     };
 

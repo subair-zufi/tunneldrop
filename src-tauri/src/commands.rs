@@ -44,6 +44,23 @@ pub async fn create_share(
     state: State<'_, AppState>,
 ) -> Result<Vec<ShareInfo>, String> {
     let pw = password.filter(|p| !p.is_empty());
+
+    // What the frontend calls a "path" is whatever the platform's file picker
+    // returned. On Android that is a content:// URI, which has no filesystem
+    // path behind it — the provider opens the file for us instead.
+    #[cfg(target_os = "android")]
+    let token = if path.starts_with("content://") {
+        let picked = crate::android_fs::open_content_uri(&path).map_err(|e| e.to_string())?;
+        state
+            .add_share_fd(picked.fd, picked.name, picked.size, pw)
+            .map_err(|e| e.to_string())?
+    } else {
+        state
+            .add_share(std::path::PathBuf::from(path), pw)
+            .map_err(|e| e.to_string())?
+    };
+
+    #[cfg(not(target_os = "android"))]
     let token = state
         .add_share(std::path::PathBuf::from(path), pw)
         .map_err(|e| e.to_string())?;

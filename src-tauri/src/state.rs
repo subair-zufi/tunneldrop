@@ -39,6 +39,24 @@ impl AppState {
         Ok(token)
     }
 
+    /// Registers a share over an already-open descriptor, for sources that have
+    /// no path — the Android picker's `content://` URIs. Name and size come
+    /// from the provider rather than the filesystem.
+    #[cfg(target_os = "android")]
+    pub fn add_share_fd(
+        &self,
+        fd: std::os::fd::OwnedFd,
+        name: String,
+        size: u64,
+        password: Option<String>,
+    ) -> anyhow::Result<String> {
+        let token = crate::token::generate_token();
+        let password_hash = password.map(|p| crate::password::hash_password(&p));
+        let share = crate::share::Share::new(token.clone(), fd, name, size, password_hash);
+        self.registry.lock().unwrap().insert(share);
+        Ok(token)
+    }
+
     /// Removes a share. Returns true if it existed.
     pub fn revoke_share(&self, token: &str) -> bool {
         self.registry.lock().unwrap().remove(token).is_some()
