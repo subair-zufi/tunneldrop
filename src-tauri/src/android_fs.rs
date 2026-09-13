@@ -7,11 +7,13 @@
 //! share — no copy into app storage, which is the whole point of Tunneldrop
 //! (a 4 GB video should not have to be duplicated to be shared).
 //!
-//! All of this is JNI against the Activity context that ndk_context exposes.
+//! All of this is JNI against the Activity context, which `android_context()`
+//! below fetches from tao.
 
 use anyhow::{anyhow, Context, Result};
 use jni::objects::{JObject, JString, JValue};
 use jni::JNIEnv;
+use std::ffi::c_void;
 use std::os::fd::{FromRawFd, OwnedFd};
 
 pub struct PickedFile {
@@ -32,14 +34,34 @@ fn check_exception(env: &mut JNIEnv, what: &str) -> Result<()> {
     Ok(())
 }
 
+/// The JavaVM and the Activity object this app is running in.
+///
+/// Deliberately not `ndk_context::android_context()`. That global is populated
+/// by ndk-glue, which Tauri's stack does not use, so the call does not fail
+/// politely — it panics, and a panic crossing tao's FFI boundary aborts the
+/// process. tao owns the Activity here and registers it in its own map, so ask
+/// tao.
+///
+/// Because the answer comes out of tao's registry, our `tao` dependency has to
+/// resolve to the same version `tauri-runtime-wry` uses: two copies of tao in
+/// one binary means two registries, and ours would always be empty. Cargo.lock
+/// pins that; if this ever starts reporting no activity after a dependency
+/// bump, a duplicated tao is the first thing to check.
+fn android_context() -> Result<(jni::JavaVM, *mut c_void)> {
+    let ctx = tao::platform::android::prelude::main_android_context()
+        .ok_or_else(|| anyhow!("no Android activity is registered yet"))?;
+    // SAFETY: tao hands out the process-wide JavaVM pointer it got from the
+    // JNI entry point; it is valid for as long as the app runs.
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.java_vm.cast()) }.context("JavaVM")?;
+    Ok((vm, ctx.context_jobject))
+}
+
 /// Opens a `content://` URI and returns its descriptor, display name and size.
 pub fn open_content_uri(uri: &str) -> Result<PickedFile> {
-    let ctx = ndk_context::android_context();
-    // SAFETY: ndk_context exposes the process-wide JavaVM and a global ref to
-    // the Activity, both valid for the life of the app. The JObject wrapper
-    // borrows that ref and does not free it.
-    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.context("JavaVM")?;
-    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+    let (vm, context_jobject) = android_context()?;
+    // SAFETY: tao holds a global ref to the Activity for the life of the app.
+    // The JObject wrapper borrows that ref and does not free it on drop.
+    let context = unsafe { JObject::from_raw(context_jobject.cast()) };
     let mut env = vm.attach_current_thread().context("attach thread")?;
 
     let resolver = env

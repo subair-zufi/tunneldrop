@@ -37,37 +37,40 @@ fn pick_free_port() -> u16 {
 /// That is why cloudflared ships as `libcloudflared.so` — the name is the only
 /// thing that gets it packaged and extracted, it is a normal ELF executable.
 ///
-/// Returns None if the JVM context is missing, which should not happen inside
-/// the running app.
+/// We ask the dynamic linker which file this function was loaded from, rather
+/// than asking the JVM for the Activity's ApplicationInfo. The JNI route needs
+/// an Android `Context`, and the usual way to reach one —
+/// `ndk_context::android_context()` — *panics* ("android context was not
+/// initialized") unless ndk-glue initialised it, which nothing in Tauri's stack
+/// ever does: tao keeps its own activity registry and leaves ndk-context alone.
+/// Since this runs inside Tauri's `setup`, that panic unwound into tao's FFI
+/// boundary, which aborts rather than unwinds — the app died on every launch
+/// with a bare SIGABRT and, because Android discards stderr, no message.
+///
+/// The linker needs no JVM, no Context and no particular thread, and its answer
+/// is exactly as good: everything under `lib/<abi>/` in the APK is unpacked into
+/// a single directory, so whatever holds `libtunneldrop_lib.so` also holds
+/// `libcloudflared.so`.
+///
+/// Returns None if the linker cannot name our own mapping, which should not
+/// happen for a library the platform loaded from a file.
 #[cfg(target_os = "android")]
 fn native_library_dir() -> Option<String> {
-    use jni::objects::{JObject, JString};
+    use std::ffi::{c_void, CStr};
 
-    let ctx = ndk_context::android_context();
-    // SAFETY: ndk_context hands out the process-wide JavaVM pointer and a
-    // global ref to the Activity, both valid for as long as the app runs. The
-    // JObject wrapper only borrows that ref; it does not free it on drop.
-    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.ok()?;
-    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
-    let mut env = vm.attach_current_thread().ok()?;
-
-    let info = env
-        .call_method(
-            &context,
-            "getApplicationInfo",
-            "()Landroid/content/pm/ApplicationInfo;",
-            &[],
-        )
-        .ok()?
-        .l()
-        .ok()?;
-    let dir = env
-        .get_field(&info, "nativeLibraryDir", "Ljava/lang/String;")
-        .ok()?
-        .l()
-        .ok()?;
-    let dir: String = env.get_string(&JString::from(dir)).ok()?.into();
-    Some(dir)
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    // SAFETY: dladdr only reads the address it is given and fills `info` with
+    // pointers into the linker's own bookkeeping, which lives as long as the
+    // library stays loaded. A zeroed Dl_info is a valid out-parameter.
+    let found = unsafe { libc::dladdr(native_library_dir as *const c_void, &mut info) };
+    if found == 0 || info.dli_fname.is_null() {
+        return None;
+    }
+    // SAFETY: on success dladdr sets dli_fname to a NUL-terminated path owned
+    // by the linker.
+    let path = unsafe { CStr::from_ptr(info.dli_fname) }.to_str().ok()?;
+    let dir = std::path::Path::new(path).parent()?;
+    Some(dir.to_string_lossy().into_owned())
 }
 
 /// Resolves the cloudflared binary path.
@@ -186,8 +189,40 @@ fn init_tray(app: &tauri::App) -> Result<Arc<AtomicBool>, Box<dyn std::error::Er
     Ok(tray_created)
 }
 
+/// Android throws away a process's stderr, so the message from a panicking
+/// Rust thread — the only thing that says *why* the app died — never reaches
+/// `adb logcat`. tao catches the unwind at the FFI boundary and calls
+/// `abort()`, leaving a bare SIGABRT tombstone and no explanation. Installing
+/// a hook that writes the panic through liblog puts the message back in
+/// logcat, under the "Tunneldrop" tag.
+#[cfg(target_os = "android")]
+fn install_panic_logger() {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    #[link(name = "log")]
+    extern "C" {
+        fn __android_log_write(prio: i32, tag: *const c_char, text: *const c_char) -> i32;
+    }
+
+    const ANDROID_LOG_ERROR: i32 = 6;
+
+    std::panic::set_hook(Box::new(|info| {
+        let text = format!("PANIC: {info}");
+        let (Ok(tag), Ok(text)) = (CString::new("Tunneldrop"), CString::new(text)) else {
+            return;
+        };
+        // SAFETY: both pointers are valid NUL-terminated strings that outlive
+        // the call, which is all liblog requires.
+        unsafe { __android_log_write(ANDROID_LOG_ERROR, tag.as_ptr(), text.as_ptr()) };
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "android")]
+    install_panic_logger();
+
     let port = pick_free_port();
 
     let builder = tauri::Builder::default()

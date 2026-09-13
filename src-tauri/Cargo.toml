@@ -39,12 +39,19 @@ anyhow = "1"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
-# Android: finding the bundled cloudflared means asking the JVM for the app's
-# nativeLibraryDir, which is a JNI call against the Activity context that
-# ndk-context hands us.
+# Android. `jni` is for talking to the ContentResolver about the picker's
+# content:// URIs; `libc` is for dladdr, which is how we locate the bundled
+# cloudflared (see native_library_dir in lib.rs).
+#
+# `tao` is here because the Activity context has to come from somewhere, and on
+# this stack that somewhere is tao's own registry — ndk-context, the obvious
+# choice, is never initialised and panics when read. It MUST stay on the version
+# tauri-runtime-wry resolves to: a second copy of tao in the binary would bring
+# a second, permanently empty registry with it.
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
-ndk-context = "0.1"
+libc = "0.2"
+tao = { version = "0.35", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -48,7 +49,13 @@ impl TunnelManager {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let mut child = cmd.spawn()?;
+        // Name the binary in the error. A bare spawn failure here reads
+        // "No such file or directory (os error 2)", which on Android is
+        // indistinguishable from the picked file being unreadable — and the
+        // thing actually missing is the packaged cloudflared.
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("could not start cloudflared at {}", self.program))?;
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
         *self.child.lock().unwrap() = Some(child);
@@ -188,21 +195,45 @@ async fn scan_for_url(rx: &mut mpsc::Receiver<Option<String>>) -> Option<String>
     }
 }
 
-/// Extracts a trycloudflare.com HTTPS URL from a line of cloudflared output.
-/// Returns None if the line contains no such URL.
+/// Extracts the quick-tunnel URL from a line of cloudflared output.
+/// Returns None if the line carries no such URL.
+///
+/// Being strict here matters. cloudflared names its own control-plane endpoint,
+/// `https://api.trycloudflare.com/tunnel`, inside the message it prints when a
+/// tunnel could *not* be created:
+///
+///   failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel":
+///   dial tcp: lookup api.trycloudflare.com ...
+///
+/// Matching on "contains trycloudflare.com" and cutting at whitespace turned
+/// that into a link — `https://api.trycloudflare.com/tunnel":/d/<token>` — and
+/// the app handed it to the user as though the share were live. So a match now
+/// has to look like a tunnel hostname and nothing else: a `*.trycloudflare.com`
+/// host, no path, and not the API host.
 pub fn parse_tunnel_url(line: &str) -> Option<String> {
     let start = line.find("https://")?;
     let rest = &line[start..];
-    // The URL ends at the first whitespace or control character.
+    // Whitespace is not enough of a terminator: cloudflared quotes URLs inside
+    // its messages, and the banner line wraps them in a `|` box.
     let end = rest
-        .find(|c: char| c.is_whitespace())
+        .find(|c: char| {
+            c.is_whitespace()
+                || c.is_control()
+                || matches!(c, '"' | '\'' | '<' | '>' | '|' | '`' | ',')
+        })
         .unwrap_or(rest.len());
-    let url = &rest[..end];
-    if url.contains("trycloudflare.com") {
-        Some(url.to_string())
-    } else {
-        None
+    // Trailing sentence punctuation is not part of the URL.
+    let url = rest[..end].trim_end_matches(['.', ':', ';', ')']).trim_end_matches('/');
+
+    let host = url.strip_prefix("https://")?;
+    // A path means this is an API endpoint, not a tunnel.
+    if host.contains('/') {
+        return None;
     }
+    if !host.ends_with(".trycloudflare.com") || host == "api.trycloudflare.com" {
+        return None;
+    }
+    Some(url.to_string())
 }
 
 #[cfg(test)]
@@ -222,6 +253,37 @@ mod tests {
     fn ignores_non_tunnel_url() {
         let line = "Visit https://developers.cloudflare.com for docs";
         assert_eq!(parse_tunnel_url(line), None);
+    }
+
+    /// The real failure seen on Android: cloudflared could not create a tunnel
+    /// and said so in a message that quotes its own API endpoint. Scraping that
+    /// endpoint produced a "link" of
+    /// `https://api.trycloudflare.com/tunnel":/d/<token>`, handed to the user as
+    /// if the share had worked.
+    #[test]
+    fn ignores_api_endpoint_in_failure_message() {
+        let line = "failed to request quick Tunnel: Post \
+\"https://api.trycloudflare.com/tunnel\": dial tcp: lookup \
+api.trycloudflare.com on [::1]:53: read: connection refused";
+        assert_eq!(parse_tunnel_url(line), None);
+    }
+
+    /// A tunnel hostname is never followed by a path; anything that has one is
+    /// an API endpoint, not a link to hand out.
+    #[test]
+    fn ignores_trycloudflare_url_with_a_path() {
+        let line = "INF posting to https://api.trycloudflare.com/tunnel now";
+        assert_eq!(parse_tunnel_url(line), None);
+    }
+
+    /// Quotes terminate the URL just as whitespace does.
+    #[test]
+    fn strips_surrounding_quotes() {
+        let line = "INF url=\"https://brave-fox-1234.trycloudflare.com\" ok";
+        assert_eq!(
+            parse_tunnel_url(line),
+            Some("https://brave-fox-1234.trycloudflare.com".to_string())
+        );
     }
 
     #[test]

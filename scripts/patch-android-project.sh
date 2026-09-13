@@ -40,6 +40,20 @@ MANIFEST="$(find "$ANDROID_DIR" -maxdepth 6 -path '*/app/src/main/AndroidManifes
 }
 echo "==> app module: $(dirname "$GRADLE_FILE")"
 
+# GNU sed's `-i` with no suffix and its `0,/re/` "first match only" addressing
+# are both unavailable in the BSD sed macOS ships, and this script has to run on
+# a maintainer's laptop as readily as on the Linux runner. Perl is on both.
+# $1 = file, $2 = pattern, $3 = replacement; both are Perl-flavoured, the
+# replacement may use $1..$n, and only the first match is replaced.
+replace_first() {
+  PAT="$2" REPL="$3" perl -0777 -i -pe '
+    my ($pat, $repl) = ($ENV{PAT}, $ENV{REPL});
+    # /m so ^ anchors to a line, not just the slurped file; /ee expands
+    # the \n and $1 backreferences in REPL.
+    s/$pat/"\"$repl\""/eem;
+  ' "$1"
+}
+
 # ── 1a. useLegacyPackaging ───────────────────────────────────────────────────
 if grep -q "useLegacyPackaging" "$GRADLE_FILE"; then
   echo "==> useLegacyPackaging already set"
@@ -49,7 +63,7 @@ else
     exit 1
   }
   # Insert as the first thing inside the android { } block.
-  sed -i '0,/^android {/s//android {\n    \/\/ libcloudflared.so is an executable we spawn, not a library we link:\n    \/\/ it has to exist as a real file in nativeLibraryDir.\n    packaging { jniLibs { useLegacyPackaging = true } }/' "$GRADLE_FILE"
+  replace_first "$GRADLE_FILE" '^android \{' 'android {\n    \/\/ libcloudflared.so is an executable we spawn, not a library we link:\n    \/\/ it has to exist as a real file in nativeLibraryDir.\n    packaging { jniLibs { useLegacyPackaging = true } }'
   grep -q "useLegacyPackaging" "$GRADLE_FILE" || {
     echo "error: failed to patch $GRADLE_FILE" >&2
     exit 1
@@ -61,7 +75,7 @@ fi
 if grep -q "extractNativeLibs" "$MANIFEST"; then
   echo "==> extractNativeLibs already set"
 else
-  sed -i '0,/<application/s//<application android:extractNativeLibs="true"/' "$MANIFEST"
+  replace_first "$MANIFEST" '<application' '<application android:extractNativeLibs=\"true\"'
   grep -q 'extractNativeLibs="true"' "$MANIFEST" || {
     echo "error: failed to patch $MANIFEST" >&2
     exit 1
@@ -73,7 +87,7 @@ fi
 if grep -q "android.permission.INTERNET" "$MANIFEST"; then
   echo "==> INTERNET permission already declared"
 else
-  sed -i '0,/<manifest[^>]*>/s//&\n    <uses-permission android:name="android.permission.INTERNET" \/>/' "$MANIFEST"
+  replace_first "$MANIFEST" '(<manifest[^>]*>)' '$1\n    <uses-permission android:name=\"android.permission.INTERNET\" \/>'
   grep -q "android.permission.INTERNET" "$MANIFEST" || {
     echo "error: failed to add INTERNET permission to $MANIFEST" >&2
     exit 1
