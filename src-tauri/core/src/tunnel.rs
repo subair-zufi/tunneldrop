@@ -45,9 +45,8 @@ impl TunnelProvider for TunnelManager {
     async fn start(&self, port: u16) -> anyhow::Result<String> {
         let mut cmd = Command::new(&self.program);
         if self.extra_args.is_empty() {
-            cmd.arg("tunnel")
-                .arg("--url")
-                .arg(format!("http://127.0.0.1:{port}"));
+            let config = write_empty_config(&std::env::temp_dir()).ok();
+            cmd.args(quick_tunnel_args(port, config.as_deref()));
         } else {
             cmd.args(&self.extra_args);
         }
@@ -171,6 +170,26 @@ impl TunnelProvider for TunnelManager {
     }
 }
 
+/// Writes the empty config file a quick tunnel runs with. Without one, cloudflared
+/// loads ~/.cloudflared/config.yml if the user has it, and that file's ingress
+/// rules replace --url: every link then returns a blank 404 from Cloudflare.
+fn write_empty_config(dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let path = dir.join("tunneldrop-cloudflared-empty.yml");
+    std::fs::write(&path, "")?;
+    Ok(path)
+}
+
+fn quick_tunnel_args(port: u16, config: Option<&std::path::Path>) -> Vec<String> {
+    let mut args = vec!["tunnel".to_string()];
+    if let Some(config) = config {
+        args.push("--config".to_string());
+        args.push(config.to_string_lossy().to_string());
+    }
+    args.push("--url".to_string());
+    args.push(format!("http://127.0.0.1:{port}"));
+    args
+}
+
 /// Reads lines from the channel until a trycloudflare.com URL is found,
 /// both streams EOF, or the 15-second deadline expires.
 async fn scan_for_url(rx: &mut mpsc::Receiver<Option<String>>) -> Option<String> {
@@ -242,6 +261,30 @@ pub fn parse_tunnel_url(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quick_tunnel_args_use_the_given_config_file() {
+        let config = std::path::Path::new("/tmp/empty.yml");
+        assert_eq!(
+            quick_tunnel_args(8080, Some(config)),
+            ["tunnel", "--config", "/tmp/empty.yml", "--url", "http://127.0.0.1:8080"]
+        );
+    }
+
+    #[test]
+    fn quick_tunnel_args_work_without_a_config_file() {
+        assert_eq!(
+            quick_tunnel_args(8080, None),
+            ["tunnel", "--url", "http://127.0.0.1:8080"]
+        );
+    }
+
+    #[test]
+    fn empty_config_file_is_created_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_empty_config(dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "");
+    }
 
     #[test]
     fn parses_url_from_banner_line() {
