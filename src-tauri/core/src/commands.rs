@@ -19,7 +19,7 @@ fn build_link(base: &Option<String>, token: &str) -> Option<String> {
 }
 
 fn share_infos(state: &AppState) -> Vec<ShareInfo> {
-    let base = state.tunnel.lock().unwrap().base_url();
+    let base = state.tunnel.base_url();
     state
         .registry
         .lock()
@@ -65,16 +65,11 @@ pub async fn create_share(
         .add_share(std::path::PathBuf::from(path), pw)
         .map_err(|e| e.to_string())?;
 
-    // Lazily start the tunnel if it is not running. Clone a cheap handle so the
-    // Mutex guard is never held across the await. If the tunnel fails to start,
-    // roll back the share we just added so it doesn't linger un-revokable.
-    if !state.tunnel.lock().unwrap().is_running() {
-        let port = state.port;
-        let mgr = { state.tunnel.lock().unwrap().clone_handle() };
-        if let Err(e) = mgr.start(port).await {
-            state.revoke_share(&token);
-            return Err(e.to_string());
-        }
+    // Lazily start the tunnel if it is not running. If it fails to start, roll
+    // back the share we just added so it doesn't linger un-revokable.
+    if let Err(e) = crate::state::ensure_tunnel(&state).await {
+        state.revoke_share(&token);
+        return Err(e.to_string());
     }
 
     Ok(share_infos(&state))
@@ -83,10 +78,7 @@ pub async fn create_share(
 #[tauri::command]
 pub fn revoke_share(token: String, state: State<'_, AppState>) -> Vec<ShareInfo> {
     state.revoke_share(&token);
-    // Stop the tunnel if no shares remain.
-    if state.active_count() == 0 {
-        state.tunnel.lock().unwrap().stop();
-    }
+    crate::state::stop_tunnel_if_idle(&state);
     share_infos(&state)
 }
 

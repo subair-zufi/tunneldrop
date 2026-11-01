@@ -10,12 +10,13 @@ pub mod commands;
 
 use state::AppState;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tauri::Manager;
 
 // Tray, the menu it hangs off, and the close-to-tray flag exist on desktop
 // only: Android and iOS have no system tray and no closable window.
 #[cfg(desktop)]
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(desktop)]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 #[cfg(desktop)]
@@ -146,7 +147,7 @@ fn init_tray(app: &tauri::App) -> Result<Arc<AtomicBool>, Box<dyn std::error::Er
                 if event.id() == "quit" {
                     // Tear down the tunnel before exiting.
                     if let Some(state) = app.try_state::<AppState>() {
-                        state.tunnel.lock().unwrap().stop();
+                        state.tunnel.stop();
                     }
                     app.exit(0);
                 }
@@ -224,6 +225,8 @@ pub struct RunOptions {
     pub configure: Box<dyn FnOnce(tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> + Send>,
     /// Routes merged into the local HTTP server.
     pub extra_routes: Option<Box<dyn FnOnce(AppState) -> axum::Router + Send>>,
+    /// Replaces the default cloudflared quick tunnel.
+    pub provider: Option<Arc<dyn tunnel::TunnelProvider>>,
 }
 
 impl Default for RunOptions {
@@ -231,6 +234,7 @@ impl Default for RunOptions {
         RunOptions {
             configure: Box::new(|builder| builder),
             extra_routes: None,
+            provider: None,
         }
     }
 }
@@ -255,12 +259,14 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, options: RunOptions) {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
 
-    let RunOptions { configure, extra_routes } = options;
+    let RunOptions { configure, extra_routes, provider } = options;
 
     configure(builder)
         .setup(move |app| {
-            let cf = cloudflared_path(app.handle());
-            let app_state = AppState::new(port, cf);
+            let app_state = match provider {
+                Some(provider) => AppState::with_provider(port, provider),
+                None => AppState::new(port, cloudflared_path(app.handle())),
+            };
             app.manage(app_state.clone());
 
             // Launch the local axum server.
@@ -306,7 +312,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, options: RunOptions) {
                     // No tray (or it failed to build). Let the window close and
                     // stop the tunnel so no cloudflared process is left behind.
                     if let Some(state) = window.app_handle().try_state::<AppState>() {
-                        state.tunnel.lock().unwrap().stop();
+                        state.tunnel.stop();
                     }
                     // Allow the close to proceed — Tauri exits when the last window closes.
                 }

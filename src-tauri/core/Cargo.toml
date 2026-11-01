@@ -16,6 +16,7 @@ rand = "0.8"
 hex = "0.4"
 argon2 = { version = "0.5", features = ["std"] }
 anyhow = "1"
+async-trait = "0.1"
 
 # Self-update: the updater plugin downloads & verifies signed releases; the
 # process plugin provides relaunch() so the app can restart after installing.

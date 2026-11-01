@@ -5,6 +5,16 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
+/// A way to make the local HTTP server reachable from the internet.
+#[async_trait::async_trait]
+pub trait TunnelProvider: Send + Sync {
+    /// Starts the tunnel pointed at the given local port. Returns the public URL.
+    async fn start(&self, port: u16) -> anyhow::Result<String>;
+    fn base_url(&self) -> Option<String>;
+    fn stop(&self);
+    fn is_running(&self) -> bool;
+}
+
 /// Supervises a single cloudflared child process and captures its public URL.
 pub struct TunnelManager {
     program: String,
@@ -26,10 +36,13 @@ impl TunnelManager {
             child: Arc::new(Mutex::new(None)),
         }
     }
+}
 
+#[async_trait::async_trait]
+impl TunnelProvider for TunnelManager {
     /// Starts the tunnel pointed at the given local port and waits (up to ~15s)
     /// for the public URL to appear in stdout/stderr. Returns the URL.
-    pub async fn start(&self, port: u16) -> anyhow::Result<String> {
+    async fn start(&self, port: u16) -> anyhow::Result<String> {
         let mut cmd = Command::new(&self.program);
         if self.extra_args.is_empty() {
             cmd.arg("tunnel")
@@ -126,12 +139,12 @@ impl TunnelManager {
         }
     }
 
-    pub fn base_url(&self) -> Option<String> {
+    fn base_url(&self) -> Option<String> {
         self.base_url.lock().unwrap().clone()
     }
 
     /// Kills the child process if running.
-    pub fn stop(&self) {
+    fn stop(&self) {
         if let Some(child) = self.child.lock().unwrap().as_mut() {
             let _ = child.start_kill();
         }
@@ -142,7 +155,7 @@ impl TunnelManager {
     /// Returns whether the tunnel process is alive. Reaps a child that has
     /// exited on its own (cloudflared crash) so the next `create_share` will
     /// transparently restart the tunnel rather than trusting a stale handle.
-    pub fn is_running(&self) -> bool {
+    fn is_running(&self) -> bool {
         let mut guard = self.child.lock().unwrap();
         let exited = match guard.as_mut() {
             Some(child) => matches!(child.try_wait(), Ok(Some(_))),
@@ -155,16 +168,6 @@ impl TunnelManager {
             return false;
         }
         true
-    }
-
-    /// Returns a handle sharing the same child/base_url state (cheap Arc clone).
-    pub fn clone_handle(&self) -> TunnelManager {
-        TunnelManager {
-            program: self.program.clone(),
-            extra_args: self.extra_args.clone(),
-            base_url: self.base_url.clone(),
-            child: self.child.clone(),
-        }
     }
 }
 

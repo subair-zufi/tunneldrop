@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Local server running on http://127.0.0.1:{port}");
     println!("Starting cloudflared tunnel (takes ~10 s)…");
 
-    let tunnel_url = state.tunnel.lock().unwrap().clone_handle().start(port).await?;
+    let tunnel_url = state.tunnel.start(port).await?;
 
     let link = format!("{tunnel_url}/d/{token}");
     println!();
