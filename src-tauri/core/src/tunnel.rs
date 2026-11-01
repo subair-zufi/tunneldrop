@@ -21,6 +21,8 @@ pub struct TunnelManager {
     extra_args: Vec<String>,
     base_url: Arc<Mutex<Option<String>>>,
     child: Arc<Mutex<Option<tokio::process::Child>>>,
+    /// Deleted when dropped, so it is kept for as long as the tunnel runs.
+    config: Mutex<Option<tempfile::NamedTempFile>>,
 }
 
 impl TunnelManager {
@@ -34,6 +36,7 @@ impl TunnelManager {
             extra_args,
             base_url: Arc::new(Mutex::new(None)),
             child: Arc::new(Mutex::new(None)),
+            config: Mutex::new(None),
         }
     }
 }
@@ -45,8 +48,9 @@ impl TunnelProvider for TunnelManager {
     async fn start(&self, port: u16) -> anyhow::Result<String> {
         let mut cmd = Command::new(&self.program);
         if self.extra_args.is_empty() {
-            let config = write_empty_config(&std::env::temp_dir()).ok();
-            cmd.args(quick_tunnel_args(port, config.as_deref()));
+            let config = create_empty_config().ok();
+            cmd.args(quick_tunnel_args(port, config.as_ref().map(|c| c.path())));
+            *self.config.lock().unwrap() = config;
         } else {
             cmd.args(&self.extra_args);
         }
@@ -149,6 +153,7 @@ impl TunnelProvider for TunnelManager {
         }
         *self.child.lock().unwrap() = None;
         *self.base_url.lock().unwrap() = None;
+        *self.config.lock().unwrap() = None;
     }
 
     /// Returns whether the tunnel process is alive. Reaps a child that has
@@ -170,13 +175,17 @@ impl TunnelProvider for TunnelManager {
     }
 }
 
-/// Writes the empty config file a quick tunnel runs with. Without one, cloudflared
+/// Creates the empty config file a quick tunnel runs with. Without one, cloudflared
 /// loads ~/.cloudflared/config.yml if the user has it, and that file's ingress
 /// rules replace --url: every link then returns a blank 404 from Cloudflare.
-fn write_empty_config(dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
-    let path = dir.join("tunneldrop-cloudflared-empty.yml");
-    std::fs::write(&path, "")?;
-    Ok(path)
+///
+/// The name is random and the file is created new and private to this user, so
+/// nobody else on the machine can supply its contents.
+fn create_empty_config() -> std::io::Result<tempfile::NamedTempFile> {
+    tempfile::Builder::new()
+        .prefix("tunneldrop-cloudflared-")
+        .suffix(".yml")
+        .tempfile()
 }
 
 fn quick_tunnel_args(port: u16, config: Option<&std::path::Path>) -> Vec<String> {
@@ -279,11 +288,36 @@ mod tests {
         );
     }
 
+    /// The temp folder is shared with other users on Linux. A predictable name
+    /// would let one of them supply the config cloudflared runs with.
     #[test]
-    fn empty_config_file_is_created_empty() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = write_empty_config(dir.path()).unwrap();
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "");
+    fn empty_config_file_is_empty_with_a_unique_name() {
+        let first = create_empty_config().unwrap();
+        let second = create_empty_config().unwrap();
+        assert_ne!(first.path(), second.path());
+        assert_eq!(std::fs::read_to_string(first.path()).unwrap(), "");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn empty_config_file_is_private_to_this_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let file = create_empty_config().unwrap();
+        let mode = std::fs::metadata(file.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// cloudflared reads the file after it is spawned, so it has to outlive
+    /// start(), and it shouldn't be left behind after stop().
+    #[tokio::test]
+    async fn config_file_lasts_until_the_tunnel_stops() {
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fake_cloudflared.sh");
+        let mgr = TunnelManager::new(script, vec![]);
+        mgr.start(12345).await.expect("should capture url");
+        let path = mgr.config.lock().unwrap().as_ref().unwrap().path().to_path_buf();
+        assert!(path.exists());
+        mgr.stop();
+        assert!(!path.exists());
     }
 
     #[test]
