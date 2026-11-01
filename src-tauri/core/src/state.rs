@@ -1,4 +1,4 @@
-use crate::share::ShareRegistry;
+use crate::share::{ShareKind, ShareRegistry};
 use crate::tunnel::{TunnelManager, TunnelProvider};
 use std::sync::{Arc, Mutex};
 
@@ -75,6 +75,32 @@ impl AppState {
         let password_hash = password.map(|p| crate::password::hash_password(&p));
         let share = crate::share::Share::new(token.clone(), fd, name, size, password_hash);
         self.registry.lock().unwrap().insert(share);
+        Ok(token)
+    }
+
+    /// Registers whatever the platform's file picker returned. On Android that
+    /// can be a content:// URI, which has no filesystem path behind it — the
+    /// provider opens the file for us instead.
+    pub fn add_from_picker(
+        &self,
+        path: String,
+        password: Option<String>,
+        kind: ShareKind,
+    ) -> anyhow::Result<String> {
+        #[cfg(target_os = "android")]
+        let token = if path.starts_with("content://") {
+            let picked = crate::android_fs::open_content_uri(&path)?;
+            self.add_share_fd(picked.fd, picked.name, picked.size, password)?
+        } else {
+            self.add_share(std::path::PathBuf::from(path), password)?
+        };
+
+        #[cfg(not(target_os = "android"))]
+        let token = self.add_share(std::path::PathBuf::from(path), password)?;
+
+        if let Some(share) = self.registry.lock().unwrap().get_mut(&token) {
+            share.kind = kind;
+        }
         Ok(token)
     }
 

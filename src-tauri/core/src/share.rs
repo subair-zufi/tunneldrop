@@ -55,6 +55,14 @@ impl ShareSource {
     }
 }
 
+/// Whether a share is a public link, or served only on routes added by the app
+/// embedding this crate. Hidden shares keep the tunnel alive but are not links.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShareKind {
+    Link,
+    Hidden,
+}
+
 #[derive(Clone, Debug)]
 pub struct Share {
     pub token: String,
@@ -64,6 +72,7 @@ pub struct Share {
     pub password_hash: Option<String>,
     pub download_count: u64,
     pub created_at: SystemTime,
+    pub kind: ShareKind,
 }
 
 impl Share {
@@ -83,6 +92,7 @@ impl Share {
             password_hash,
             download_count: 0,
             created_at: SystemTime::now(),
+            kind: ShareKind::Link,
         }
     }
 }

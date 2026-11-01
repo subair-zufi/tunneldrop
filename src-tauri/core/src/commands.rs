@@ -1,3 +1,4 @@
+use crate::share::ShareKind;
 use crate::state::AppState;
 use serde::Serialize;
 use tauri::State;
@@ -26,6 +27,7 @@ fn share_infos(state: &AppState) -> Vec<ShareInfo> {
         .unwrap()
         .list()
         .into_iter()
+        .filter(|s| s.kind == ShareKind::Link)
         .map(|s| ShareInfo {
             link: build_link(&base, &s.token),
             token: s.token,
@@ -45,24 +47,8 @@ pub async fn create_share(
 ) -> Result<Vec<ShareInfo>, String> {
     let pw = password.filter(|p| !p.is_empty());
 
-    // What the frontend calls a "path" is whatever the platform's file picker
-    // returned. On Android that is a content:// URI, which has no filesystem
-    // path behind it — the provider opens the file for us instead.
-    #[cfg(target_os = "android")]
-    let token = if path.starts_with("content://") {
-        let picked = crate::android_fs::open_content_uri(&path).map_err(|e| e.to_string())?;
-        state
-            .add_share_fd(picked.fd, picked.name, picked.size, pw)
-            .map_err(|e| e.to_string())?
-    } else {
-        state
-            .add_share(std::path::PathBuf::from(path), pw)
-            .map_err(|e| e.to_string())?
-    };
-
-    #[cfg(not(target_os = "android"))]
     let token = state
-        .add_share(std::path::PathBuf::from(path), pw)
+        .add_from_picker(path, pw, ShareKind::Link)
         .map_err(|e| e.to_string())?;
 
     // Lazily start the tunnel if it is not running. If it fails to start, roll
@@ -90,6 +76,23 @@ pub fn list_shares(state: State<'_, AppState>) -> Vec<ShareInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn hidden_shares_stay_out_of_the_link_list_but_count_as_active() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(b"data").unwrap();
+        let st = AppState::new(0, "cloudflared".into());
+        let path = f.path().to_string_lossy().to_string();
+        let token = st.add_from_picker(path.clone(), None, ShareKind::Hidden).unwrap();
+        assert!(share_infos(&st).is_empty());
+        assert_eq!(st.active_count(), 1);
+        assert!(st.registry.lock().unwrap().get(&token).is_some());
+
+        st.add_from_picker(path, None, ShareKind::Link).unwrap();
+        assert_eq!(share_infos(&st).len(), 1);
+        assert_eq!(st.active_count(), 2);
+    }
 
     #[test]
     fn build_link_formats_correctly() {

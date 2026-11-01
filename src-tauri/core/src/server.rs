@@ -1,3 +1,4 @@
+use crate::share::{Share, ShareKind};
 use crate::state::AppState;
 use axum::{
     body::Body,
@@ -7,6 +8,8 @@ use axum::{
     routing::get,
     Router,
 };
+use std::io::SeekFrom;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
 /// Builds the axum router for serving landing pages and downloads.
@@ -20,6 +23,12 @@ pub fn build_router(state: AppState) -> Router {
         // Graph preview image for image shares (WhatsApp/Slack/etc. fetch it).
         .route("/d/:token/raw", get(raw))
         .with_state(state)
+}
+
+/// Looks up a share for the public link routes. Hidden shares don't exist here.
+fn link_share(state: &AppState, token: &str) -> Option<Share> {
+    let registry = state.registry.lock().unwrap();
+    registry.get(token).filter(|s| s.kind == ShareKind::Link).cloned()
 }
 
 /// Maps a file extension to a content type for inline serving / link previews.
@@ -123,7 +132,7 @@ async fn landing_page(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Response {
-    let share = { state.registry.lock().unwrap().get(&token).cloned() };
+    let share = link_share(&state, &token);
     let Some(share) = share else {
         return (StatusCode::NOT_FOUND, "Link not found or revoked.").into_response();
     };
@@ -213,32 +222,118 @@ input{{padding:.5rem;margin:.5rem;font-size:1rem}}</style></head>
 /// Serves the file inline (real content type, `inline` disposition) for use as
 /// a link-preview image and in-browser viewing. Refuses password-protected
 /// shares so protected content is never exposed without the password.
-async fn raw(Path(token): Path<String>, State(state): State<AppState>) -> Response {
-    let share = { state.registry.lock().unwrap().get(&token).cloned() };
+async fn raw(
+    Path(token): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let share = link_share(&state, &token);
     let Some(share) = share else {
         return (StatusCode::NOT_FOUND, "Link not found or revoked.").into_response();
     };
     if share.password_hash.is_some() {
         return (StatusCode::NOT_FOUND, "Not available.").into_response();
     }
-    let file = match share.source.open() {
+    stream_share(&share, &headers, Disposition::Inline).await
+}
+
+/// How a browser should treat a served file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Disposition {
+    Attachment,
+    Inline,
+}
+
+enum RangeSpec {
+    Full,
+    Partial { start: u64, end: u64 },
+    Unsatisfiable,
+}
+
+/// Reads the forms a resuming download uses, `bytes=N-` and `bytes=N-M`. Any
+/// other form is ignored, which the HTTP spec allows: the client gets the file.
+fn parse_range(headers: &HeaderMap, size: u64) -> RangeSpec {
+    let Some(value) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) else {
+        return RangeSpec::Full;
+    };
+    let Some((start, end)) = value.strip_prefix("bytes=").and_then(|r| r.split_once('-')) else {
+        return RangeSpec::Full;
+    };
+    let Ok(start) = start.parse::<u64>() else {
+        return RangeSpec::Full;
+    };
+    let end = if end.is_empty() {
+        u64::MAX
+    } else {
+        match end.parse::<u64>() {
+            Ok(end) if end >= start => end,
+            _ => return RangeSpec::Full,
+        }
+    };
+    if start >= size {
+        return RangeSpec::Unsatisfiable;
+    }
+    RangeSpec::Partial { start, end: end.min(size - 1) }
+}
+
+/// Serves a share's file, honouring Range requests so an interrupted download
+/// can resume. Access checks are the caller's job.
+pub async fn stream_share(share: &Share, headers: &HeaderMap, disposition: Disposition) -> Response {
+    let mut range = parse_range(headers, share.size);
+    if matches!(range, RangeSpec::Unsatisfiable) {
+        return (
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            [(header::CONTENT_RANGE, format!("bytes */{}", share.size))],
+        )
+            .into_response();
+    }
+
+    let mut file = match share.source.open() {
         Ok(f) => tokio::fs::File::from_std(f),
         Err(_) => return (StatusCode::GONE, "File no longer available.").into_response(),
     };
-    let stream = ReaderStream::new(file);
-    let body = Body::from_stream(stream);
-    (
-        [
-            (header::CONTENT_TYPE, content_type_for(&share.name).to_string()),
-            (header::CONTENT_LENGTH, share.size.to_string()),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("inline; filename=\"{}\"", sanitize_filename(&share.name)),
-            ),
-        ],
-        body,
-    )
-        .into_response()
+
+    // An Android provider can hand back a pipe, which can't seek. The client
+    // then gets the whole file, which the 200 status tells it.
+    if let RangeSpec::Partial { start, .. } = range {
+        if file.seek(SeekFrom::Start(start)).await.is_err() {
+            range = RangeSpec::Full;
+        }
+    }
+
+    let (content_type, disposition_kind) = match disposition {
+        Disposition::Attachment => ("application/octet-stream", "attachment"),
+        Disposition::Inline => (content_type_for(&share.name), "inline"),
+    };
+    let mut response_headers = vec![
+        (header::CONTENT_TYPE, content_type.to_string()),
+        (header::ACCEPT_RANGES, "bytes".to_string()),
+        (
+            header::CONTENT_DISPOSITION,
+            format!("{disposition_kind}; filename=\"{}\"", sanitize_filename(&share.name)),
+        ),
+    ];
+
+    let (status, length) = match range {
+        RangeSpec::Partial { start, end } => {
+            response_headers.push((
+                header::CONTENT_RANGE,
+                format!("bytes {start}-{end}/{}", share.size),
+            ));
+            (StatusCode::PARTIAL_CONTENT, end - start + 1)
+        }
+        _ => (StatusCode::OK, share.size),
+    };
+    response_headers.push((header::CONTENT_LENGTH, length.to_string()));
+
+    let mut response = Response::new(Body::from_stream(ReaderStream::new(file.take(length))));
+    *response.status_mut() = status;
+    for (name, value) in response_headers {
+        if let Ok(value) = value.parse() {
+            response.headers_mut().insert(name, value);
+        }
+    }
+    response
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -249,9 +344,10 @@ struct DownloadForm {
 async fn download(
     Path(token): Path<String>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     form: Option<axum::Form<DownloadForm>>,
 ) -> Response {
-    let share = { state.registry.lock().unwrap().get(&token).cloned() };
+    let share = link_share(&state, &token);
     let Some(share) = share else {
         return (StatusCode::NOT_FOUND, "Link not found or revoked.").into_response();
     };
@@ -267,40 +363,24 @@ async fn download(
         }
     }
 
-    let file = match share.source.open() {
-        Ok(f) => tokio::fs::File::from_std(f),
-        Err(_) => return (StatusCode::GONE, "File no longer available.").into_response(),
-    };
+    let response = stream_share(&share, &headers, Disposition::Attachment).await;
 
     // NOTE: the count increments when the transfer begins, not on completion;
-    // an aborted download is still counted.
-    {
+    // an aborted download is still counted. Resuming one isn't a new download.
+    let resuming = matches!(parse_range(&headers, share.size), RangeSpec::Partial { start, .. } if start > 0);
+    if response.status().is_success() && !resuming {
         let mut reg = state.registry.lock().unwrap();
         if let Some(s) = reg.get_mut(&token) {
             s.download_count += 1;
         }
     }
 
-    let stream = ReaderStream::new(file);
-    let body = Body::from_stream(stream);
-    (
-        [
-            (header::CONTENT_TYPE, "application/octet-stream".to_string()),
-            (header::CONTENT_LENGTH, share.size.to_string()),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{}\"", sanitize_filename(&share.name)),
-            ),
-        ],
-        body,
-    )
-        .into_response()
+    response
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::share::Share;
     use axum::body::to_bytes;
     use axum::http::Request;
     use std::io::Write;
@@ -318,6 +398,111 @@ mod tests {
         f.write_all(contents).unwrap();
         let path = f.path().to_path_buf();
         (f, path)
+    }
+
+    async fn get_with_range(app: Router, uri: &str, range: Option<&str>) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let mut req = Request::builder().uri(uri);
+        if let Some(range) = range {
+            req = req.header(header::RANGE, range);
+        }
+        let res = app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+        let status = res.status();
+        let headers = res.headers().clone();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        (status, headers, body.to_vec())
+    }
+
+    fn digits_state() -> (tempfile::NamedTempFile, AppState) {
+        let (keep, path) = temp_file(b"0123456789");
+        let share = Share::new("tok".into(), path, "digits.txt".into(), 10, None);
+        (keep, state_with_share(share))
+    }
+
+    #[tokio::test]
+    async fn hidden_shares_are_not_served_on_public_link_routes() {
+        let (_keep, path) = temp_file(b"secret");
+        let mut share = Share::new("hid".into(), path, "secret.txt".into(), 6, None);
+        share.kind = ShareKind::Hidden;
+        let st = state_with_share(share);
+        for uri in ["/d/hid", "/d/hid/download", "/d/hid/raw"] {
+            let (status, _, _) = get_with_range(build_router(st.clone()), uri, None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn range_returns_206_with_the_requested_bytes() {
+        let (_keep, st) = digits_state();
+        let (status, headers, body) =
+            get_with_range(build_router(st), "/d/tok/download", Some("bytes=4-")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(headers[header::CONTENT_RANGE], "bytes 4-9/10");
+        assert_eq!(body, b"456789");
+    }
+
+    #[tokio::test]
+    async fn bounded_range_returns_exact_slice() {
+        let (_keep, st) = digits_state();
+        let (status, headers, body) =
+            get_with_range(build_router(st), "/d/tok/download", Some("bytes=2-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(headers[header::CONTENT_LENGTH], "2");
+        assert_eq!(body, b"23");
+    }
+
+    #[tokio::test]
+    async fn range_end_past_the_file_is_clamped() {
+        let (_keep, st) = digits_state();
+        let (status, headers, body) =
+            get_with_range(build_router(st), "/d/tok/download", Some("bytes=8-100")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(headers[header::CONTENT_RANGE], "bytes 8-9/10");
+        assert_eq!(body, b"89");
+    }
+
+    #[tokio::test]
+    async fn range_past_the_end_returns_416() {
+        let (_keep, st) = digits_state();
+        let (status, headers, _) =
+            get_with_range(build_router(st), "/d/tok/download", Some("bytes=10-")).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(headers[header::CONTENT_RANGE], "bytes */10");
+    }
+
+    #[tokio::test]
+    async fn unsupported_range_forms_return_the_whole_file() {
+        let (_keep, st) = digits_state();
+        for range in ["bytes=-3", "bytes=1-2,4-5", "bytes=5-2", "lines=1-2"] {
+            let (status, _, body) =
+                get_with_range(build_router(st.clone()), "/d/tok/download", Some(range)).await;
+            assert_eq!(status, StatusCode::OK, "{range}");
+            assert_eq!(body, b"0123456789", "{range}");
+        }
+    }
+
+    #[tokio::test]
+    async fn full_download_advertises_ranges_and_counts_once() {
+        let (_keep, st) = digits_state();
+        let (status, headers, _) =
+            get_with_range(build_router(st.clone()), "/d/tok/download", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        let count = || st.registry.lock().unwrap().get("tok").unwrap().download_count;
+        assert_eq!(count(), 1);
+
+        get_with_range(build_router(st.clone()), "/d/tok/download", Some("bytes=4-")).await;
+        assert_eq!(count(), 1, "resuming is not a new download");
+    }
+
+    #[tokio::test]
+    async fn raw_route_keeps_its_inline_headers_and_supports_range() {
+        let (_keep, st) = digits_state();
+        let (status, headers, body) =
+            get_with_range(build_router(st), "/d/tok/raw", Some("bytes=4-5")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert!(headers[header::CONTENT_DISPOSITION].to_str().unwrap().starts_with("inline"));
+        assert!(headers[header::CONTENT_TYPE].to_str().unwrap().starts_with("text/plain"));
+        assert_eq!(body, b"45");
     }
 
     #[tokio::test]
