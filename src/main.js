@@ -47,6 +47,14 @@ async function createShare(path) {
   }
 }
 
+// A page embedding this script can take over what happens to a chosen file by
+// setting window.tunneldropHooks.onFile before this module loads.
+function fileChosen(path) {
+  const onFile = window.tunneldropHooks?.onFile;
+  if (typeof onFile === "function") onFile(path, createShare);
+  else createShare(path);
+}
+
 async function revoke(token) {
   const shares = await invoke("revoke_share", { token });
   render(shares);
@@ -121,7 +129,7 @@ function render(shares) {
 
 pickBtn.addEventListener("click", async () => {
   const path = await open({ multiple: false });
-  if (typeof path === "string") createShare(path);
+  if (typeof path === "string") fileChosen(path);
 });
 
 // Tauri file drop events. There is nothing to drag on a phone, and the API may
@@ -134,7 +142,10 @@ try {
     } else if (event.payload.type === "drop") {
       dropzone.classList.remove("over");
       const paths = event.payload.paths;
-      if (paths && paths.length > 0) createShare(paths[0]);
+      if (paths && paths.length > 0) {
+        if (typeof window.tunneldropHooks?.onFile === "function") paths.forEach(fileChosen);
+        else createShare(paths[0]);
+      }
     } else {
       dropzone.classList.remove("over");
     }
