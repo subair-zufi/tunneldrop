@@ -4523,6 +4523,20 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 name = "tunneldrop"
 version = "1.0.2"
 dependencies = [
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-process",
+ "tauri-plugin-shell",
+ "tauri-plugin-updater",
+ "tunneldrop_core",
+]
+
+[[package]]
+name = "tunneldrop_core"
+version = "1.0.2"
+dependencies = [
  "anyhow",
  "argon2",
  "axum",
@@ -4535,7 +4549,6 @@ dependencies = [
  "serde_json",
  "tao",
  "tauri",
- "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-process",
  "tauri-plugin-shell",

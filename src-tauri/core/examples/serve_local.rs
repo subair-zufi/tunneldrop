@@ -1,6 +1,6 @@
 //! Headless test: start the axum server, add a share, print the local URL,
 //! then download the file and confirm the bytes match — no cloudflared needed.
-use tunneldrop_lib::{server, state::AppState};
+use tunneldrop_core::{server, state::AppState};
 use std::io::Write;
 use std::net::SocketAddr;
 

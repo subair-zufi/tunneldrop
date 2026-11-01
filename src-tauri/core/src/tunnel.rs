@@ -293,7 +293,7 @@ api.trycloudflare.com on [::1]:53: read: connection refused";
 
     #[tokio::test]
     async fn start_captures_url_from_fake_binary() {
-        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fake_cloudflared.sh");
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fake_cloudflared.sh");
         let mgr = TunnelManager::new(script, vec![script.to_string()]);
         let url = mgr.start(12345).await.expect("should capture url");
         assert_eq!(url, "https://fake-test-tunnel.trycloudflare.com");
@@ -306,7 +306,7 @@ api.trycloudflare.com on [::1]:53: read: connection refused";
     async fn start_errors_quickly_when_process_exits_without_url() {
         // The fake exits immediately without printing a URL. scan_for_url must
         // return on double-EOF rather than busy-spinning until the 15s deadline.
-        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fake_cloudflared_nourl.sh");
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fake_cloudflared_nourl.sh");
         let mgr = TunnelManager::new(script, vec![script.to_string()]);
         let started = std::time::Instant::now();
         let result = mgr.start(12345).await;

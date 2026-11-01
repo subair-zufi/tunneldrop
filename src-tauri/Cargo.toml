@@ -14,46 +14,19 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# The plugins are initialised in tunneldrop_core, but tauri-build only reads
+# permission files and Android projects from this crate's direct dependencies,
+# so they have to be listed here too.
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
-axum = "0.7"
-tokio-util = { version = "0.7", features = ["io"] }
-rand = "0.8"
-hex = "0.4"
-argon2 = { version = "0.5", features = ["std"] }
-anyhow = "1"
+tunneldrop_core = { path = "core" }
 
-# Self-update: the updater plugin downloads & verifies signed releases; the
-# process plugin provides relaunch() so the app can restart after installing.
-# Desktop-only — on mobile updates come from the store or a sideloaded package,
-# and the updater drags in `ring`, whose build script needs an NDK C toolchain
-# the Android build has no reason to require. Cargo target sections are resolved
-# before build scripts run, so Tauri's `desktop` cfg is not available here and
-# the three desktop OSes have to be spelled out.
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
-# Android. `jni` is for talking to the ContentResolver about the picker's
-# content:// URIs; `libc` is for dladdr, which is how we locate the bundled
-# cloudflared (see native_library_dir in lib.rs).
-#
-# `tao` is here because the Activity context has to come from somewhere, and on
-# this stack that somewhere is tao's own registry — ndk-context, the obvious
-# choice, is never initialised and panics when read. It MUST stay on the version
-# tauri-runtime-wry resolves to: a second copy of tao in the binary would bring
-# a second, permanently empty registry with it.
-[target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
-libc = "0.2"
-tao = { version = "0.35", default-features = false }
-
-[dev-dependencies]
-tempfile = "3"
-tower = { version = "0.5", features = ["util"] }
-reqwest = { version = "0.12", features = ["blocking"] }
+[workspace]
+members = [".", "core"]

@@ -61,7 +61,7 @@ jobs:
 
       - name: Run tests
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --workspace
 
   # ── Android type-check ──────────────────────────────────────────────────────
   # Keeps the mobile target compiling while the Android port is in progress.
@@ -92,7 +92,7 @@ jobs:
 
       - name: Type-check for aarch64-linux-android
         working-directory: src-tauri
-        run: cargo check --target aarch64-linux-android
+        run: cargo check --workspace --target aarch64-linux-android
 
   # ── Android APK (test build) ────────────────────────────────────────────────
   # Produces a debug-signed, arm64-only APK for sideloading onto a phone, and

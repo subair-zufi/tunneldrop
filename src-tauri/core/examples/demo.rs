@@ -2,7 +2,7 @@
 /// a temp file, prints the public link, then waits for Ctrl-C.
 ///
 /// Run: cargo run --example demo
-use tunneldrop_lib::{server, state::AppState};
+use tunneldrop_core::{server, state::AppState};
 use std::io::Write;
 use std::net::SocketAddr;
 

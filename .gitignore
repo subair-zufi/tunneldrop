@@ -5,3 +5,6 @@ node_modules/
 
 # Checkout used by scripts/build-cloudflared-android.sh.
 /target/
+
+# macOS metadata files created on non-native volumes.
+._*

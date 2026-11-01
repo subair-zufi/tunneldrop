@@ -80,7 +80,7 @@ Two things make this necessary rather than just downloading a release:
   what gets it installed with the exec bit set. (Syncthing-Android has shipped
   its Go daemon this way for years.)
 
-`cloudflared_path()` in `src-tauri/src/lib.rs` resolves that location on Android
+`cloudflared_path()` in `src-tauri/core/src/lib.rs` resolves that location on Android
 by asking the JVM for `ApplicationInfo.nativeLibraryDir` over JNI. The rest of
 `tunnel.rs` — spawn, scrape the `trycloudflare.com` URL out of stderr, kill on
 revoke — should work unchanged, since it is plain `tokio::process`.
